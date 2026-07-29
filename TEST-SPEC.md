@@ -140,15 +140,32 @@ The `r` hotkey has no modifier guard (Ctrl+R page reload is unaffected, but any 
 text input will conflict), `e.key.toLowerCase()` throws when `e.key` is undefined, and the
 invalid-placement message doesn't distinguish off-board from overlap.
 
-## 5. Suggested automation
+## 5. Automation (implemented)
 
-The game logic is pure enough to test headlessly if the `<script>` is split into
-`game.js` (board/fleet/fire/AI, exported) plus `ui.js`. Then:
+The inline `<script>` was split into `game.js` (pure rules + AI, no DOM, exported for both
+`require()` and the browser) and `ui.js` (rendering, input, turn sequencing), so the logic
+is testable headlessly.
 
-- Unit: `canPlace` boundary and overlap cases, `fire` hit/miss/sunk/repeat, `allSunk`,
-  `coord` mapping.
-- Property: 10k random fleets → always 17 occupied cells, no overlaps, no overhang.
-- Simulation: 1000 AI-vs-AI games → no exceptions, every game terminates, average shots to
-  win within a sane band (a hunt/target AI should land near 60–75 shots; pure random is ~95),
-  which also functions as a regression check on Bug 3's fix.
-- DOM: Playwright covering P1–P8, F1–F9, L1–L4 above, with L3 as the explicit race test.
+```
+npm install
+npm test        # node --test  — unit, property, and simulation tests (game.js)
+npm run test:ui # playwright   — DOM tests against index.html
+npm run test:all
+```
+
+- **`test/game.test.js`** (`node --test`, no dependencies): `coord` mapping; `canPlace`
+  overhang/overlap/adjacency; `fire` miss/hit/sunk/repeat-null; `allSunk`; a property test
+  over 5000 random fleets (always 5 axis-aligned, on-board, non-overlapping ships covering
+  exactly 17 cells); AI cases A2, A3, A4 and collinear line-end targeting; and A5 — 2000
+  simulated games asserting every game terminates, the AI never repeats a shot or runs out
+  of targets, and the average stays in the hunt/target band. Measured: **~52 shots average,
+  worst 69** (pure random would be ~95), which doubles as the regression guard on Bug 3.
+- **`test/ui.spec.js`** (Playwright, Chromium): P1–P8, F1–F9, L1–L4. Supporting hooks added
+  to the app for testability: every cell carries `data-coord="A5"`, `window.__battleship`
+  exposes the live state plus `render()`, and `?delay=0` removes the AI's thinking pause so
+  tests don't race it. L3 deliberately runs with the real 600ms delay so the cancelled-timer
+  regression is exercised for real.
+
+Current status: 11/11 logic tests and 18/18 DOM tests pass.
+
+Not yet automated: visual/CSS regression, and a CI workflow to run both suites on push.
