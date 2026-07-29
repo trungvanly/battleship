@@ -121,7 +121,33 @@ const allSunk = (board) => board.ships.every((s) => s.hits === s.size);
 
 // ---- AI targeting: hunt/target with parity ----
 function makeAI() {
-  return { queue: [], tried: new Set() };
+  return { queue: [], hits: [] };
+}
+
+function contiguous(values) {
+  const sorted = [...values].sort((a, b) => a - b);
+  return sorted.every((v, i) => i === 0 || v === sorted[i - 1] + 1);
+}
+
+// Rebuilds the target queue from the hits belonging to ships still afloat.
+// Two or more collinear, contiguous hits lock targeting to that line's two ends.
+function rebuildQueue(ai) {
+  const hits = ai.hits;
+  ai.queue = [];
+  if (!hits.length) return;
+  const rows = hits.map(([r]) => r);
+  const cols = hits.map(([, c]) => c);
+  if (hits.length > 1 && rows.every((r) => r === rows[0]) && contiguous(cols)) {
+    const sorted = [...cols].sort((a, b) => a - b);
+    ai.queue.push([rows[0], sorted[0] - 1], [rows[0], sorted[sorted.length - 1] + 1]);
+    return;
+  }
+  if (hits.length > 1 && cols.every((c) => c === cols[0]) && contiguous(rows)) {
+    const sorted = [...rows].sort((a, b) => a - b);
+    ai.queue.push([sorted[0] - 1, cols[0]], [sorted[sorted.length - 1] + 1, cols[0]]);
+    return;
+  }
+  for (const [r, c] of hits) ai.queue.push([r - 1, c], [r + 1, c], [r, c - 1], [r, c + 1]);
 }
 
 function aiChoose(ai, board) {
@@ -134,7 +160,7 @@ function aiChoose(ai, board) {
     for (let c = 0; c < SIZE; c++)
       if (!board.shots[r][c] && (r + c) % 2 === 0) open.push([r, c]);
   const pool = open.length ? open : allOpen(board);
-  return pool[Math.floor(Math.random() * pool.length)];
+  return pool.length ? pool[Math.floor(Math.random() * pool.length)] : null;
 }
 
 function allOpen(board) {
@@ -148,6 +174,7 @@ function allOpen(board) {
 let state;
 
 function newGame() {
+  if (state && state.timer !== null) clearTimeout(state.timer);
   state = {
     player: emptyBoard(),
     enemy: emptyBoard(),
@@ -156,6 +183,7 @@ function newGame() {
     horizontal: true,
     over: false,
     turn: "player",
+    timer: null,
   };
   randomFleet(state.enemy);
   document.getElementById("log").innerHTML = "";
@@ -235,7 +263,7 @@ function render() {
   document.getElementById("rotate").textContent =
     "Rotate: " + (state.horizontal ? "horizontal" : "vertical");
   document.getElementById("status").textContent = state.over
-    ? state.winner + " wins!"
+    ? state.winner
     : spec
     ? `Placing ${spec.name} (${spec.size})`
     : state.turn === "player"
@@ -246,7 +274,8 @@ function render() {
 function onPlaceClick(r, c) {
   const spec = placingSpec();
   const cells = cellsFor(r, c, spec.size, state.horizontal);
-  if (!canPlace(state.player, cells)) { log("Invalid placement — ships must fit on the board and not overlap."); return; }
+  if (cells.some(([rr, cc]) => rr >= SIZE || cc >= SIZE)) { log(`Invalid placement — the ${spec.name} would hang off the board.`); return; }
+  if (!canPlace(state.player, cells)) { log(`Invalid placement — the ${spec.name} would overlap another ship.`); return; }
   place(state.player, spec, cells);
   log(`${spec.name} placed at ${coord(cells[0][0], cells[0][1])}.`);
   state.toPlace++;
@@ -259,22 +288,31 @@ function onFireClick(r, c) {
   const res = fire(state.enemy, r, c);
   if (!res) return;
   log(`You fire at ${coord(r, c)} — ${res.result === "miss" ? "miss" : "HIT"}${res.result === "sunk" ? `! You sank their ${res.ship.name}!` : ""}`);
-  if (allSunk(state.enemy)) { state.over = true; state.winner = "You"; log("All enemy ships sunk. You win!"); render(); return; }
+  if (allSunk(state.enemy)) { state.over = true; state.winner = "You win!"; log("All enemy ships sunk. You win!"); render(); return; }
   state.turn = "enemy";
   render();
-  setTimeout(enemyTurn, 600);
+  const game = state;
+  state.timer = setTimeout(() => { if (state === game) enemyTurn(); }, 600);
 }
 
 function enemyTurn() {
-  const [r, c] = aiChoose(state.ai, state.player);
+  state.timer = null;
+  const target = aiChoose(state.ai, state.player);
+  if (!target) return;
+  const [r, c] = target;
   const res = fire(state.player, r, c);
+  if (!res) return;
   log(`Enemy fires at ${coord(r, c)} — ${res.result === "miss" ? "miss" : "HIT"}${res.result === "sunk" ? `! Your ${res.ship.name} is sunk!` : ""}`);
   if (res.result === "hit") {
-    state.ai.queue.push([r - 1, c], [r + 1, c], [r, c - 1], [r, c + 1]);
+    state.ai.hits.push([r, c]);
+    rebuildQueue(state.ai);
   } else if (res.result === "sunk") {
-    state.ai.queue = [];
+    const sunkCells = res.ship.cells;
+    state.ai.hits = state.ai.hits.filter(
+      ([hr, hc]) => !sunkCells.some(([sr, sc]) => sr === hr && sc === hc));
+    rebuildQueue(state.ai);
   }
-  if (allSunk(state.player)) { state.over = true; state.winner = "Enemy"; log("Your fleet is destroyed. Enemy wins."); render(); return; }
+  if (allSunk(state.player)) { state.over = true; state.winner = "Enemy wins!"; log("Your fleet is destroyed. Enemy wins."); render(); return; }
   state.turn = "player";
   render();
 }
@@ -285,7 +323,8 @@ document.getElementById("rotate").addEventListener("click", () => {
   render();
 });
 window.addEventListener("keydown", (e) => {
-  if (e.key.toLowerCase() === "r") { state.horizontal = !state.horizontal; render(); }
+  if (e.ctrlKey || e.altKey || e.metaKey) return;
+  if (e.key && e.key.toLowerCase() === "r") { state.horizontal = !state.horizontal; render(); }
 });
 newGame();
 </script>
