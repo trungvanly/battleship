@@ -44,15 +44,22 @@ Total 17 occupied cells per side.
 - Once placed, a ship cannot be moved for the rest of the game.
 
 ### Player placement flow
-1. Ships are placed in fleet order: Carrier → Battleship → Cruiser → Submarine → Destroyer.
+1. Clicking places ships in fleet order: Carrier → Battleship → Cruiser → Submarine →
+   Destroyer. Dragging places whichever ship was dragged, in any order.
 2. The status bar shows the ship currently being placed and its length.
 3. Orientation is toggled with the **Rotate** button or the `R` key; the button label
    always reads the current orientation.
 4. Clicking a cell on the player's ocean grid anchors the ship's bow at that cell and
    extends right (horizontal) or down (vertical).
-5. An illegal placement is rejected with a log message and no state change; the same ship
-   remains pending.
-6. When all five are placed, the log reads "Fleet ready. Fire at will!" and firing unlocks.
+5. Hovering (or dragging over) the ocean grid previews the footprint: green when the
+   placement is legal, red when it would overhang or overlap.
+6. **Random placement** fills every ship still unplaced with a legal random position.
+   **Undo last ship** removes the most recently placed ship; it is disabled once the
+   first shot has been fired.
+7. An illegal placement is rejected with a log message naming the reason (overhang vs
+   overlap) and no state change; the same ship remains pending.
+8. When all five are placed, the log reads "Fleet ready. Fire at will!" and firing unlocks.
+   Rotate, Random placement and the difficulty selector lock at that point.
 
 ### AI placement
 Random placement at game start: for each ship, pick a random orientation and anchor until
@@ -86,7 +93,21 @@ the enemy fleet, so the enemy's damage state is never leaked before a sink.
 
 ## 7. AI Opponent
 
-Two-mode "hunt / target" strategy:
+Difficulty is chosen before placement finishes and is fixed for the game.
+
+| Level | Strategy | Avg shots to clear a board (2000-game simulation) |
+|---|---|---|
+| Easy | Uniform random fire, no follow-up | ~96 |
+| Normal | Parity hunt + adjacency targeting (below) | ~52 |
+| Hard | Probability density over every legal remaining placement | ~46 |
+
+**Hard** rebuilds, before each shot, a map of how many legal placements of the ships still
+afloat could cover each un-fired cell, weighting placements that would explain an
+unresolved hit (×25 per covered hit) so it finishes damaged ships first, then fires at the
+highest-scoring cell. It uses only information a real opponent has — its own hit/miss
+results and the sinkings announced to it — never the hidden grid.
+
+**Normal** is a two-mode "hunt / target" strategy:
 
 - **Hunt mode** (no unresolved hits): fire at a random un-fired cell where `(row + col)`
   is even. This parity grid guarantees every ship of length ≥ 2 is eventually intersected
@@ -95,19 +116,15 @@ Two-mode "hunt / target" strategy:
 - **Target mode**: after a hit, the four orthogonal neighbours of that cell are pushed onto
   a target queue. While the queue is non-empty, the AI pops from it, skipping cells that
   are off-board or already fired at.
-- On a sink, the target queue is cleared and the AI returns to hunt mode.
-
-Known limitation: the queue is not direction-aware, so after two collinear hits the AI may
-still probe perpendicular neighbours; and adjacent ships can cause the queue to be cleared
-while a second damaged ship is still unresolved. Improving to a direction-locked or
-probability-density AI is the natural next iteration, along with a difficulty selector
-(easy = pure random, normal = current, hard = probability density).
+- Once two hits are collinear and contiguous, targeting locks to the two ends of that line.
+- On a sink, only that ship's hits are discarded; any other damaged ship is still pursued.
 
 ## 8. Game End
 
 - The game ends the moment one fleet's 17 cells are all hit.
-- The status bar reads "You wins!" / "Enemy wins!" (see open items), further firing is
-  disabled, and the log records the outcome.
+- The status bar reads "You win!" / "Enemy wins!", further firing is disabled, and both the
+  log and the stats panel record a summary: shots, hits and accuracy for each side plus
+  the difficulty played.
 - **New game** resets both boards, re-randomises the AI fleet, clears the log, and
   restarts placement.
 
@@ -115,6 +132,8 @@ probability-density AI is the natural next iteration, along with a difficulty se
 
 - Status bar always states the current phase: placing ship X, your turn, enemy firing, or
   the final result.
+- A stats panel under the log appears with the first shot and tracks shots, hits, accuracy
+  and ships sunk for both sides.
 - Cell colors: water (dark blue), own ship (grey), hit (red), sunk (dark red), miss (white).
 - The target grid shows a crosshair cursor and hover outline only on cells that can still
   be fired at.
@@ -125,13 +144,9 @@ probability-density AI is the natural next iteration, along with a difficulty se
 
 - No two-player / networked play, no accounts, no persistence across reloads.
 - No animations, sound, or mobile-specific layout.
-- No drag-and-drop placement or random-placement button for the player.
-- No undo.
 
 ## 11. Open Items / Next Steps
 
-- Grammar in the win banner ("You wins!" → "You win!").
-- "Random placement" and "Undo last ship" buttons for setup.
-- Drag-and-drop placement with a live legality preview.
-- Difficulty levels and a smarter, direction-aware AI.
-- Shot counter / accuracy stats and an end-of-game summary.
+- The opponent's board still lives in the page's JS, so it is readable from the console.
+- No touch support for drag placement (mouse drag and click only).
+- No match history or per-difficulty statistics across games.

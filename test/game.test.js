@@ -105,9 +105,9 @@ test("A3: after a lone sink the AI returns to parity hunting", () => {
   assert.equal((r + c) % 2, 0);
 });
 
-function playAIGame() {
+function playAIGame(difficulty = "normal") {
   const board = g.randomFleet(g.emptyBoard());
-  const ai = g.makeAI();
+  const ai = g.makeAI(difficulty);
   const seen = new Set();
   let shots = 0;
   while (!g.allSunk(board)) {
@@ -125,6 +125,62 @@ function playAIGame() {
   return shots;
 }
 
+test("accuracy summarises a board's shot history", () => {
+  const b = g.emptyBoard();
+  g.place(b, shipSpec("Destroyer"), g.cellsFor(0, 0, 2, true));
+  assert.deepEqual(g.accuracy(b), { shots: 0, hits: 0, misses: 0, pct: 0 });
+  g.fire(b, 0, 0);
+  g.fire(b, 5, 5);
+  g.fire(b, 6, 6);
+  g.fire(b, 7, 7);
+  assert.deepEqual(g.accuracy(b), { shots: 4, hits: 1, misses: 3, pct: 25 });
+});
+
+test("aiObserve tracks sunk cells and the remaining fleet", () => {
+  const b = g.emptyBoard();
+  g.place(b, shipSpec("Destroyer"), g.cellsFor(0, 0, 2, true));
+  const ai = g.makeAI();
+  assert.deepEqual(ai.remaining, [5, 4, 3, 3, 2]);
+  g.aiObserve(ai, 0, 0, g.fire(b, 0, 0));
+  g.aiObserve(ai, 0, 1, g.fire(b, 0, 1));
+  assert.deepEqual(ai.remaining, [5, 4, 3, 3]);
+  assert.deepEqual(ai.sunkCells, [[0, 0], [0, 1]]);
+});
+
+test("easy fires uniformly at random, ignoring parity and hits", () => {
+  const b = g.randomFleet(g.emptyBoard());
+  const ai = g.makeAI("easy");
+  ai.hits = [[4, 4]];
+  g.rebuildQueue(ai);
+  const picks = Array.from({ length: 200 }, () => g.aiChoose(ai, b));
+  assert.ok(picks.some(([r, c]) => (r + c) % 2 === 1), "not restricted to the parity grid");
+  const adjacent = picks.filter(([r, c]) => Math.abs(r - 4) + Math.abs(c - 4) === 1).length;
+  assert.ok(adjacent < picks.length, "does not chase hits");
+});
+
+test("hard: density chases unresolved hits and prefers the centre", () => {
+  const b = g.emptyBoard();
+  g.place(b, shipSpec("Cruiser"), g.cellsFor(4, 4, 3, true));
+  const ai = g.makeAI("hard");
+  g.aiObserve(ai, 4, 4, g.fire(b, 4, 4));
+  const [r, c] = g.aiChoose(ai, b);
+  assert.equal(Math.abs(r - 4) + Math.abs(c - 4), 1, "an unresolved hit dominates the map");
+  assert.equal(g.densityMap(ai, b)[4][4], 0, "already-fired cells score zero");
+
+  const fresh = g.densityMap(g.makeAI("hard"), g.emptyBoard());
+  assert.ok(fresh[4][4] > fresh[0][0], "the centre is denser than the corner");
+});
+
+test("hard mode cannot see ships it has not shot at", () => {
+  // Identical shot history over different hidden fleets must give identical maps.
+  const a = g.emptyBoard();
+  const b = g.emptyBoard();
+  g.place(a, shipSpec("Cruiser"), g.cellsFor(0, 0, 3, true));
+  g.place(b, shipSpec("Cruiser"), g.cellsFor(9, 7, 3, true));
+  const ai = g.makeAI("hard");
+  assert.deepEqual(g.densityMap(ai, a), g.densityMap(ai, b));
+});
+
 test("A5: 2000 simulated games terminate, and the AI beats random play", () => {
   const games = 2000;
   let total = 0;
@@ -138,4 +194,20 @@ test("A5: 2000 simulated games terminate, and the AI beats random play", () => {
   console.log(`    AI shots to clear a board: avg ${avg.toFixed(1)}, worst ${worst}`);
   assert.ok(avg < 70, `hunt/target should average well under random play, got ${avg.toFixed(1)}`);
   assert.ok(avg > 30, `suspiciously low average (${avg.toFixed(1)}) — is the AI cheating?`);
+});
+
+test("difficulty ordering: hard beats normal beats easy", () => {
+  assert.deepEqual(g.DIFFICULTIES, ["easy", "normal", "hard"]);
+  const runs = 120;
+  const average = (difficulty) => {
+    let total = 0;
+    for (let i = 0; i < runs; i++) total += playAIGame(difficulty);
+    return total / runs;
+  };
+  const easy = average("easy");
+  const normal = average("normal");
+  const hard = average("hard");
+  console.log(`    avg shots — easy ${easy.toFixed(1)}, normal ${normal.toFixed(1)}, hard ${hard.toFixed(1)}`);
+  assert.ok(hard < normal, `hard (${hard.toFixed(1)}) should need fewer shots than normal (${normal.toFixed(1)})`);
+  assert.ok(normal < easy, `normal (${normal.toFixed(1)}) should need fewer shots than easy (${easy.toFixed(1)})`);
 });

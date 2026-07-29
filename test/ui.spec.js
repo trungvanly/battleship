@@ -152,7 +152,7 @@ test.describe("firing", () => {
     });
     await cell(page, "enemy", "B9").click();
     expect(await status(page)).toBe("You win!");
-    expect(await logText(page)).toContain("You win!");
+    expect(await logText(page)).toContain("All enemy ships sunk.");
     const shots = await state(page, () => __battleship.state.player.shots.flat().filter(Boolean).length);
     await page.waitForTimeout(100);
     expect(await state(page, () => __battleship.state.player.shots.flat().filter(Boolean).length)).toBe(shots);
@@ -174,6 +174,119 @@ test.describe("firing", () => {
     });
     await cell(page, "enemy", "J10").click();
     await expect.poll(() => status(page)).toBe("Enemy wins!");
+  });
+});
+
+test.describe("setup aids", () => {
+  test.beforeEach(async ({ page }) => page.goto(fast));
+
+  test("S1: Random placement fills the whole fleet legally", async ({ page }) => {
+    await page.click("#random");
+    const cells = await state(page, () => __battleship.state.player.grid.flat().filter(Boolean).length);
+    expect(cells).toBe(17);
+    expect(await status(page)).toContain("Your turn");
+    expect(await logText(page)).toContain("Fleet placed randomly.");
+    await expect(page.locator("#random")).toBeDisabled();
+  });
+
+  test("S2: Random placement only fills the ships still unplaced", async ({ page }) => {
+    await cell(page, "player", "A1").click();
+    await page.click("#random");
+    for (const c of ["A1", "B1", "C1", "D1", "E1"]) {
+      await expect(cell(page, "player", c)).toHaveClass(/ship/);
+    }
+    expect(await state(page, () => __battleship.state.player.ships.length)).toBe(5);
+  });
+
+  test("S3: Undo removes the last ship and is disabled at the extremes", async ({ page }) => {
+    await expect(page.locator("#undo")).toBeDisabled();
+    await cell(page, "player", "A1").click();
+    await page.click("#undo");
+    await expect(cell(page, "player", "A1")).not.toHaveClass(/ship/);
+    expect(await logText(page)).toContain("Carrier removed.");
+    expect(await status(page)).toContain("Placing Carrier");
+    await expect(page.locator("#undo")).toBeDisabled();
+  });
+
+  test("S4: Undo is unavailable once shots have been fired", async ({ page }) => {
+    await page.click("#random");
+    await cell(page, "enemy", "J10").click();
+    await expect(page.locator("#undo")).toBeDisabled();
+  });
+
+  test("S5: hovering previews the placement, green when legal and red when not", async ({ page }) => {
+    await cell(page, "player", "A1").hover();
+    for (const c of ["A1", "B1", "C1", "D1", "E1"]) {
+      await expect(cell(page, "player", c)).toHaveClass(/preview-ok/);
+    }
+    await cell(page, "player", "H1").hover();
+    await expect(cell(page, "player", "H1")).toHaveClass(/preview-bad/);
+    await expect(cell(page, "player", "A1")).not.toHaveClass(/preview-ok/);
+  });
+
+  test("S6: dragging a ship from the fleet list places it", async ({ page }) => {
+    await page.locator('#playerFleet li[data-ship="Destroyer"]').dragTo(cell(page, "player", "C3"));
+    for (const c of ["C3", "D3"]) {
+      await expect(cell(page, "player", c)).toHaveClass(/ship/);
+    }
+    expect(await logText(page)).toContain("Destroyer placed at C3.");
+    expect(await status(page)).toContain("Placing Carrier");
+  });
+
+  test("S7: a placed ship is no longer draggable", async ({ page }) => {
+    await page.click("#random");
+    await expect(page.locator('#playerFleet li[data-ship="Destroyer"]')).not.toHaveAttribute("draggable", "true");
+  });
+});
+
+test.describe("difficulty and stats", () => {
+  test("D1: the chosen difficulty drives the AI and locks once firing starts", async ({ page }) => {
+    await page.goto(fast);
+    await page.selectOption("#difficulty", "hard");
+    await page.click("#random");
+    expect(await state(page, () => __battleship.state.ai.difficulty)).toBe("hard");
+    await expect(page.locator("#difficulty")).toBeDisabled();
+  });
+
+  test("D2: New game keeps the selected difficulty", async ({ page }) => {
+    await page.goto(fast);
+    await page.selectOption("#difficulty", "easy");
+    await page.click("#new");
+    expect(await state(page, () => __battleship.state.difficulty)).toBe("easy");
+  });
+
+  test("D3: stats appear after the first shot and track accuracy", async ({ page }) => {
+    await page.goto(fast);
+    await page.click("#random");
+    expect(await page.locator("#stats").innerText()).toBe("");
+    await state(page, () => {
+      const s = __battleship.state;
+      s.enemy = emptyBoard();
+      place(s.enemy, { name: "Destroyer", size: 2 }, cellsFor(0, 0, 2, true));
+      __battleship.render();
+    });
+    await cell(page, "enemy", "A1").click();   // hit
+    await cell(page, "enemy", "J10").click();  // miss
+    const stats = await page.locator("#stats").innerText();
+    expect(stats).toContain("You");
+    expect(stats).toContain("50%");
+  });
+
+  test("D4: winning prints an end-of-game summary", async ({ page }) => {
+    await page.goto(fast);
+    await page.click("#random");
+    await state(page, () => {
+      const s = __battleship.state;
+      s.enemy = emptyBoard();
+      place(s.enemy, { name: "Destroyer", size: 2 }, cellsFor(0, 0, 2, true));
+      __battleship.render();
+    });
+    await cell(page, "enemy", "A1").click();
+    await cell(page, "enemy", "B1").click();
+    expect(await status(page)).toBe("You win!");
+    const summary = await page.locator("#stats .summary").innerText();
+    expect(summary).toContain("All enemy ships sunk.");
+    expect(summary).toContain("Difficulty: normal");
   });
 });
 

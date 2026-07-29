@@ -72,8 +72,27 @@
 
   const allSunk = (board) => board.ships.every((s) => s.hits === s.size);
 
-  // ---- AI targeting: hunt/target with parity ----
-  const makeAI = () => ({ queue: [], hits: [] });
+  // Shot statistics for a board that has been fired at.
+  function accuracy(board) {
+    const flat = board.shots.flat();
+    const shots = flat.filter(Boolean).length;
+    const hits = flat.filter((s) => s === "hit").length;
+    return { shots, hits, misses: shots - hits, pct: shots ? Math.round((hits / shots) * 100) : 0 };
+  }
+
+  // ---- AI ----
+  // difficulty: "easy"   = uniform random fire
+  //             "normal" = parity hunt + adjacency targeting
+  //             "hard"   = probability density over every legal remaining placement
+  const DIFFICULTIES = ["easy", "normal", "hard"];
+
+  const makeAI = (difficulty = "normal") => ({
+    difficulty,
+    queue: [],
+    hits: [],                       // hits on ships still afloat
+    sunkCells: [],                  // cells known to belong to sunk ships
+    remaining: FLEET.map((s) => s.size),
+  });
 
   function contiguous(values) {
     const sorted = [...values].sort((a, b) => a - b);
@@ -108,14 +127,60 @@
     return open;
   }
 
-  function aiChoose(ai, board, rng = Math.random) {
+  // Scores every cell by how many legal placements of the remaining fleet cover it,
+  // weighting placements that would explain an unresolved hit. Uses only information
+  // the AI legitimately has: its own shot results and the sinkings announced to it.
+  function densityMap(ai, board) {
+    const isSunk = (r, c) => ai.sunkCells.some(([sr, sc]) => sr === r && sc === c);
+    const scores = Array.from({ length: SIZE }, () => Array(SIZE).fill(0));
+    for (const size of ai.remaining) {
+      for (let r = 0; r < SIZE; r++) {
+        for (let c = 0; c < SIZE; c++) {
+          for (const horizontal of [true, false]) {
+            const cells = cellsFor(r, c, size, horizontal);
+            if (!onBoard(cells)) continue;
+            if (cells.some(([cr, cc]) => board.shots[cr][cc] === "miss" || isSunk(cr, cc))) continue;
+            const covered = cells.filter(([cr, cc]) => board.shots[cr][cc] === "hit").length;
+            const weight = 1 + covered * 25;
+            for (const [cr, cc] of cells) if (!board.shots[cr][cc]) scores[cr][cc] += weight;
+          }
+        }
+      }
+    }
+    return scores;
+  }
+
+  function chooseByDensity(ai, board, rng) {
+    const scores = densityMap(ai, board);
+    let best = [];
+    let bestScore = 0;
+    for (const [r, c] of allOpen(board)) {
+      if (scores[r][c] > bestScore) { bestScore = scores[r][c]; best = [[r, c]]; }
+      else if (scores[r][c] === bestScore && bestScore > 0) best.push([r, c]);
+    }
+    if (!best.length) return null;
+    return best[Math.floor(rng() * best.length)];
+  }
+
+  function aiChoose(ai, board, options = {}) {
+    const rng = options.rng || Math.random;
+    const difficulty = options.difficulty || ai.difficulty || "normal";
+    const open = allOpen(board);
+    if (!open.length) return null;
+
+    if (difficulty === "easy") return open[Math.floor(rng() * open.length)];
+
+    if (difficulty === "hard") {
+      return chooseByDensity(ai, board, rng) || open[Math.floor(rng() * open.length)];
+    }
+
     while (ai.queue.length) {
       const [r, c] = ai.queue.shift();
       if (r >= 0 && r < SIZE && c >= 0 && c < SIZE && !board.shots[r][c]) return [r, c];
     }
-    const parity = allOpen(board).filter(([r, c]) => (r + c) % 2 === 0);
-    const pool = parity.length ? parity : allOpen(board);
-    return pool.length ? pool[Math.floor(rng() * pool.length)] : null;
+    const parity = open.filter(([r, c]) => (r + c) % 2 === 0);
+    const pool = parity.length ? parity : open;
+    return pool[Math.floor(rng() * pool.length)];
   }
 
   // Folds a shot result into the AI's memory. Only the sunk ship's own hits are
@@ -128,6 +193,9 @@
     } else if (res.result === "sunk") {
       const sunk = res.ship.cells;
       ai.hits = ai.hits.filter(([hr, hc]) => !sunk.some(([sr, sc]) => sr === hr && sc === hc));
+      ai.sunkCells.push(...sunk);
+      const i = ai.remaining.indexOf(res.ship.size);
+      if (i !== -1) ai.remaining.splice(i, 1);
       rebuildQueue(ai);
     }
   }
@@ -135,6 +203,6 @@
   return {
     SIZE, LETTERS, FLEET, coord, emptyBoard, cellsFor, onBoard, canPlace, place,
     randomFleet, fire, allSunk, makeAI, contiguous, rebuildQueue, allOpen,
-    aiChoose, aiObserve,
+    aiChoose, aiObserve, densityMap, DIFFICULTIES, accuracy,
   };
 });

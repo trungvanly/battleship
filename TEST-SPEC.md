@@ -166,6 +166,24 @@ npm run test:all
   tests don't race it. L3 deliberately runs with the real 600ms delay so the cancelled-timer
   regression is exercised for real.
 
-Current status: 11/11 logic tests and 18/18 DOM tests pass.
+Coverage was extended alongside the SPEC.md open items:
 
-Not yet automated: visual/CSS regression, and a CI workflow to run both suites on push.
+| id | Case |
+|---|---|
+| S1–S2 | Random placement fills the fleet legally, and only the ships still unplaced |
+| S3–S4 | Undo removes the last ship; disabled with an empty board and after the first shot |
+| S5 | Hover preview is green when legal and red when it would overhang or overlap |
+| S6–S7 | Dragging a ship from the fleet list places it; placed ships stop being draggable |
+| D1–D2 | The difficulty selector drives the AI and locks at first fire; New game keeps it |
+| D3–D4 | Stats appear with the first shot and track accuracy; winning prints a summary |
+
+Logic side, additionally: `accuracy`, the AI's sunk-cell/remaining-fleet memory, easy-mode
+uniform fire, hard-mode density behaviour, a fairness test asserting the density map is
+identical for two different hidden fleets with the same shot history, and a difficulty
+ordering test (measured: easy ~96, normal ~52, hard ~46 shots per board).
+
+CI (`.github/workflows/test.yml`) runs both suites on every push to main and every PR.
+
+Current status: 17/17 logic tests and 29/29 DOM tests pass.
+
+Not yet automated: visual/CSS regression, and touch-based drag placement.

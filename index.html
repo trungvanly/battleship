@@ -21,6 +21,9 @@
   .cell.hit { background:var(--hit); }
   .cell.miss { background:var(--miss); }
   .cell.sunk { background:var(--sunk); }
+  .cell.preview-ok { background:#2f6f4f; outline:2px solid #51cf66; }
+  .cell.preview-bad { background:#6f2f2f; outline:2px solid #ff6b6b; }
+  .board.placing .cell:not(.label) { cursor:grab; }
   .cell.shot { cursor:default !important; }
   .cell.shot:hover { outline:none !important; }
   .fleet { list-style:none; padding:0; margin:12px 0 0; font-size:14px; }
@@ -31,6 +34,14 @@
   button { background:#1971c2; color:#fff; border:none; padding:8px 14px; border-radius:6px; cursor:pointer; font-size:14px; }
   button:hover { background:#1c7ed6; }
   #status { font-size:14px; color:#ffd43b; }
+  select { background:#0b2138; color:#e9f2fb; border:1px solid #1b4d7a; border-radius:6px; padding:6px 8px; font-size:14px; }
+  label { font-size:14px; color:#8ab4dd; display:flex; align-items:center; gap:6px; }
+  button:disabled { background:#2b4a68; color:#8ab4dd; cursor:not-allowed; }
+  #stats { margin-top:10px; width:394px; font-size:13px; color:#8ab4dd; }
+  #stats table { border-collapse:collapse; width:100%; }
+  #stats th, #stats td { text-align:left; padding:2px 6px 2px 0; font-weight:400; }
+  #stats th { color:#e9f2fb; }
+  #stats .summary { margin-top:6px; color:#ffd43b; }
 </style>
 </head>
 <body>
@@ -38,6 +49,15 @@
   <h1>Battleship</h1>
   <button id="new">New game</button>
   <button id="rotate">Rotate: horizontal</button>
+  <button id="random">Random placement</button>
+  <button id="undo">Undo last ship</button>
+  <label id="difficultyLabel">Difficulty
+    <select id="difficulty">
+      <option value="easy">Easy</option>
+      <option value="normal" selected>Normal</option>
+      <option value="hard">Hard</option>
+    </select>
+  </label>
   <span id="status"></span>
 </header>
 <main>
@@ -54,6 +74,7 @@
   <section class="panel">
     <h2>Log</h2>
     <div id="log"></div>
+    <div id="stats"></div>
   </section>
 </main>
 <script src="game.js"></script>
