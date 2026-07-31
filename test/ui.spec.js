@@ -343,18 +343,18 @@ test.describe("sound", () => {
     await expect(mute).toHaveText("Sound: off");
     await expect(mute).toHaveAttribute("aria-pressed", "true");
     expect(await logText(page)).toContain("Sound off.");
-    expect(await state(page, () => sound.muted)).toBe(true);
+    expect(await state(page, () => sfx.muted)).toBe(true);
     await mute.click();
     await expect(mute).toHaveText("Sound: on");
-    expect(await state(page, () => sound.muted)).toBe(false);
+    expect(await state(page, () => sfx.muted)).toBe(false);
   });
 
   test("A2: firing plays a shot effect without disturbing the game", async ({ page }) => {
     await page.goto(fast);
     await state(page, () => {
       window.__played = [];
-      const play = sound.play;
-      sound.play = (name) => { window.__played.push(name); return play(name); };
+      const play = sfx.play;
+      sfx.play = (name) => { window.__played.push(name); return play(name); };
     });
     await placeFleet(page);
     await cell(page, "enemy", "A1").click();
@@ -362,5 +362,20 @@ test.describe("sound", () => {
     expect(played.filter((n) => n === "place")).toHaveLength(5);
     expect(played).toContain("fire");
     expect(played.some((n) => ["hit", "miss", "sunk"].includes(n))).toBe(true);
+  });
+
+  // A deploy that shipped index.html without sound.js took the whole game down,
+  // because ui.js died on the first reference to the missing global.
+  test("A3: the game still plays when sound.js fails to load", async ({ page }) => {
+    await page.route("**/sound.js", (route) => route.abort());
+    const failures = [];
+    page.on("pageerror", (err) => failures.push(String(err)));
+    await page.goto(fast);
+    await expect(page.locator("#mute")).toHaveText("Sound: unavailable");
+    await expect(page.locator("#mute")).toBeDisabled();
+    await placeFleet(page);
+    await cell(page, "enemy", "A1").click();
+    expect(await logText(page)).toContain("You fire at A1");
+    expect(failures).toEqual([]);
   });
 });
