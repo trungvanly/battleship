@@ -294,7 +294,11 @@ test("re-firing an already-shot cell is not a turn", async () => {
   win.__battleship.onFireClick(5, 5);
   await flush();
   assert.equal(win.__battleship.state.enemy.shots.flat().filter(Boolean).length, shots);
-  assert.equal(logText(win), before, "nothing is logged and the AI does not reply");
+  assert.equal(
+    logText(win),
+    before + "You already fired at F6 — pick another cell.",
+    "the repeat is explained and the AI does not reply"
+  );
   win.close();
 });
 

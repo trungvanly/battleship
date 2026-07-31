@@ -19,7 +19,8 @@
 
   const coord = (r, c) => LETTERS[c] + (r + 1);
 
-  const inBounds = (r, c) => r >= 0 && r < SIZE && c >= 0 && c < SIZE;
+  const inBounds = (r, c) =>
+    Number.isInteger(r) && Number.isInteger(c) && r >= 0 && r < SIZE && c >= 0 && c < SIZE;
   const sameCell = ([ar, ac], [br, bc]) => ar === br && ac === bc;
   const includesCell = (cells, cell) => cells.some((other) => sameCell(other, cell));
   const pickRandom = (items, rng = Math.random) =>
@@ -49,31 +50,44 @@
   }
 
   function place(board, spec, cells) {
+    if (!spec || typeof spec.size !== "number") throw new TypeError("place: invalid ship spec");
+    if (cells.length !== spec.size)
+      throw new RangeError(`place: ${spec.name} needs ${spec.size} cells, got ${cells.length}`);
+    if (!canPlace(board, cells))
+      throw new RangeError(`place: ${spec.name} does not fit at ${coord(cells[0][0], cells[0][1])}`);
     const ship = { name: spec.name, size: spec.size, cells, hits: 0 };
     board.ships.push(ship);
     cells.forEach(([r, c]) => (board.grid[r][c] = ship));
     return ship;
   }
 
+  // Bounded so a board that cannot fit the fleet fails loudly instead of hanging.
+  const PLACEMENT_ATTEMPTS = 1000;
+
+  function randomPlace(board, spec, rng = Math.random) {
+    for (let attempt = 0; attempt < PLACEMENT_ATTEMPTS; attempt++) {
+      const horizontal = rng() < 0.5;
+      const r = Math.floor(rng() * SIZE);
+      const c = Math.floor(rng() * SIZE);
+      const cells = cellsFor(r, c, spec.size, horizontal);
+      if (canPlace(board, cells)) return place(board, spec, cells);
+    }
+    throw new Error(
+      `randomFleet: no legal position for the ${spec.name} after ${PLACEMENT_ATTEMPTS} attempts`
+    );
+  }
+
   // Places each of the given specs at a uniformly random legal position.
   function placeRandomly(board, specs, rng = Math.random) {
-    for (const spec of specs) {
-      let placed = false;
-      while (!placed) {
-        const horizontal = rng() < 0.5;
-        const r = Math.floor(rng() * SIZE);
-        const c = Math.floor(rng() * SIZE);
-        const cells = cellsFor(r, c, spec.size, horizontal);
-        if (canPlace(board, cells)) { place(board, spec, cells); placed = true; }
-      }
-    }
+    for (const spec of specs) randomPlace(board, spec, rng);
     return board;
   }
 
   const randomFleet = (board, rng = Math.random) => placeRandomly(board, FLEET, rng);
 
   function fire(board, r, c) {
-    if (board.shots[r][c]) return null;
+    if (!inBounds(r, c)) throw new RangeError(`fire: (${r}, ${c}) is off the board`);
+    if (board.shots[r][c]) return null; // repeat shot: not a turn
     const ship = board.grid[r][c];
     board.shots[r][c] = ship ? "hit" : "miss";
     if (!ship) return { result: "miss" };
@@ -97,8 +111,16 @@
   //             "hard"   = probability density over every legal remaining placement
   const DIFFICULTIES = ["easy", "normal", "hard"];
 
+  function assertDifficulty(difficulty) {
+    if (!DIFFICULTIES.includes(difficulty))
+      throw new RangeError(
+        `unknown difficulty "${difficulty}" (expected ${DIFFICULTIES.join(", ")})`
+      );
+    return difficulty;
+  }
+
   const makeAI = (difficulty = "normal") => ({
-    difficulty,
+    difficulty: assertDifficulty(difficulty),
     queue: [],
     hits: [],                       // hits on ships still afloat
     sunkCells: [],                  // cells known to belong to sunk ships
@@ -181,7 +203,7 @@
 
   function aiChoose(ai, board, options = {}) {
     const rng = options.rng || Math.random;
-    const difficulty = options.difficulty || ai.difficulty || "normal";
+    const difficulty = assertDifficulty(options.difficulty || ai.difficulty || "normal");
     const open = allOpen(board);
     if (!open.length) return null;
 
@@ -203,6 +225,9 @@
   // discarded, so a second damaged ship keeps being pursued.
   function aiObserve(ai, r, c, res) {
     if (!res) return;
+    if (!inBounds(r, c)) throw new RangeError(`aiObserve: (${r}, ${c}) is off the board`);
+    if (res.result === "sunk" && (!res.ship || !Array.isArray(res.ship.cells)))
+      throw new TypeError("aiObserve: a sunk result must carry the ship it sank");
     if (res.result === "hit") {
       ai.hits.push([r, c]);
       rebuildQueue(ai);
@@ -219,7 +244,8 @@
   return {
     SIZE, LETTERS, FLEET, coord, inBounds, sameCell, includesCell, pickRandom,
     isSunk, sunkCount, hasShots, emptyBoard, cellsFor, onBoard, canPlace, place,
-    placeRandomly, randomFleet, fire, allSunk, makeAI, contiguous, rebuildQueue,
-    allOpen, aiChoose, aiObserve, densityMap, DIFFICULTIES, accuracy,
+    placeRandomly, randomPlace, randomFleet, fire, allSunk, makeAI, contiguous,
+    rebuildQueue, allOpen, aiChoose, aiObserve, densityMap, DIFFICULTIES,
+    assertDifficulty, accuracy,
   };
 });

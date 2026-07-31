@@ -1,11 +1,23 @@
 // DOM layer: rendering, input handling, and turn sequencing. Rules live in game.js.
 
-// Tests can shorten the AI's thinking time with ?delay=0.
-const AI_DELAY_MS = Number(new URLSearchParams(location.search).get("delay") ?? 600);
+// Tests can shorten the AI's thinking time with ?delay=0. Anything that is not a
+// finite number in [0, MAX_AI_DELAY_MS] is rejected loudly and falls back.
+const DEFAULT_AI_DELAY_MS = 600;
+const MAX_AI_DELAY_MS = 10000;
+
+function parseDelay(raw) {
+  if (raw === null) return DEFAULT_AI_DELAY_MS;
+  const n = Number(raw);
+  if (!Number.isFinite(n) || n < 0 || n > MAX_AI_DELAY_MS) {
+    console.warn(`Ignoring invalid ?delay=${raw}; using ${DEFAULT_AI_DELAY_MS}ms.`);
+    return DEFAULT_AI_DELAY_MS;
+  }
+  return n;
+}
+
+const AI_DELAY_MS = parseDelay(new URLSearchParams(location.search).get("delay"));
 
 let state;
-
-const byId = (id) => document.getElementById(id);
 
 // <div class="cell ...">text</div>, the unit every grid is built from.
 function cellEl(classes, text) {
@@ -15,9 +27,28 @@ function cellEl(classes, text) {
   return d;
 }
 
+// Every DOM lookup goes through here so a missing element is an immediate,
+// named failure instead of a downstream "cannot read property of null".
+function el(id) {
+  const node = document.getElementById(id);
+  if (!node) throw new Error(`Missing required element #${id}`);
+  return node;
+}
+
+// Surfaces an unexpected failure to the player instead of letting it die in a
+// callback, and leaves the game in a state they can act on.
+function reportError(context, err) {
+  console.error(`${context}:`, err);
+  try {
+    log(`Something went wrong (${context}): ${err && err.message ? err.message : err}. Start a new game.`);
+  } catch (logErr) {
+    console.error("Could not write to the log:", logErr);
+  }
+}
+
 function newGame() {
   if (state && state.timer !== null) clearTimeout(state.timer);
-  const difficulty = byId("difficulty").value;
+  const difficulty = el("difficulty").value;
   state = {
     player: emptyBoard(),
     enemy: emptyBoard(),
@@ -32,7 +63,7 @@ function newGame() {
   };
   randomFleet(state.enemy);
   buildSkeleton();
-  byId("log").innerHTML = "";
+  el("log").textContent = "";
   log("Place your fleet: click or drag a ship onto your ocean grid.");
   render();
 }
@@ -40,7 +71,7 @@ function newGame() {
 // The grids and fleet lists are structural: they are created on the first game and
 // then reused for the life of the page.
 function buildSkeleton() {
-  const player = byId("player");
+  const player = el("player");
   if (gridCells.has(player)) return;
   buildGrid(player, {
     onClick: (r, c) => { if (!placementDone()) onPlaceClick(r, c); },
@@ -48,22 +79,31 @@ function buildSkeleton() {
     onDrop: (r, c) => { if (!placementDone()) onDrop(r, c); },
     onLeave: clearPreview,
   });
-  buildGrid(byId("enemy"), {
+  buildGrid(el("enemy"), {
     onClick: (r, c) => {
       if (placementDone() && !state.over && state.turn === "player") onFireClick(r, c);
     },
   });
-  buildFleetList(byId("playerFleet"));
-  buildFleetList(byId("enemyFleet"));
+  buildFleetList(el("playerFleet"));
+  buildFleetList(el("enemyFleet"));
 }
 
 function log(msg) {
-  const el = byId("log");
+  const box = el("log");
   const d = document.createElement("div");
   d.textContent = msg;
-  el.appendChild(d);
-  el.scrollTop = el.scrollHeight;
+  box.appendChild(d);
+  box.scrollTop = box.scrollHeight;
 }
+
+// A refused action: same message as always, plus the buzz that goes with it.
+function rejected(msg) {
+  sound.play("invalid");
+  log(msg);
+}
+
+// Shot feedback shared by both sides: hit, sunk, and miss each have their own effect.
+const shotSound = (result) => sound.play(result === "miss" ? "miss" : result === "sunk" ? "sunk" : "hit");
 
 const isPlaced = (name) => state.player.ships.some((s) => s.name === name);
 const unplaced = () => FLEET.filter((spec) => !isPlaced(spec.name));
@@ -80,9 +120,15 @@ const placementDone = () => unplaced().length === 0;
 
 function placeShip(spec, r, c, horizontal) {
   const cells = cellsFor(r, c, spec.size, horizontal);
-  if (!onBoard(cells)) { log(`Invalid placement — the ${spec.name} would hang off the board.`); return false; }
-  if (!canPlace(state.player, cells)) { log(`Invalid placement — the ${spec.name} would overlap another ship.`); return false; }
-  place(state.player, spec, cells);
+  if (!onBoard(cells)) { rejected(`Invalid placement — the ${spec.name} would hang off the board.`); return false; }
+  if (!canPlace(state.player, cells)) { rejected(`Invalid placement — the ${spec.name} would overlap another ship.`); return false; }
+  try {
+    place(state.player, spec, cells);
+  } catch (err) {
+    reportError(`placing the ${spec.name}`, err);
+    return false;
+  }
+  sound.play("place");
   log(`${spec.name} placed at ${coord(r, c)}.`);
   if (placementDone()) log("Fleet ready. Fire at will!");
   return true;
@@ -90,14 +136,25 @@ function placeShip(spec, r, c, horizontal) {
 
 function randomPlacement() {
   if (placementDone()) return;
-  placeRandomly(state.player, unplaced());
+  try {
+    placeRandomly(state.player, unplaced());
+  } catch (err) {
+    reportError("placing the fleet randomly", err);
+    render();
+    return;
+  }
+  sound.play("place");
   log("Fleet placed randomly.");
   log("Fleet ready. Fire at will!");
   render();
 }
 
 function undoLastShip() {
-  if (!state.player.ships.length || hasShots(state.player)) return;
+  if (!state.player.ships.length) { rejected("Nothing to undo — no ships placed yet."); return; }
+  if (hasShots(state.player)) {
+    rejected("Ships cannot be moved once the shooting has started.");
+    return;
+  }
   const ship = state.player.ships.pop();
   ship.cells.forEach(([r, c]) => (state.player.grid[r][c] = null));
   log(`${ship.name} removed.`);
@@ -119,12 +176,12 @@ function previewCells() {
 const gridCells = new WeakMap();
 const fleetItems = new WeakMap();
 
-function buildGrid(el, hooks) {
-  el.appendChild(cellEl("cell label"));
-  LETTERS.forEach((L) => el.appendChild(cellEl("cell label", L)));
+function buildGrid(container, hooks) {
+  container.appendChild(cellEl("cell label"));
+  LETTERS.forEach((L) => container.appendChild(cellEl("cell label", L)));
   const cells = [];
   for (let r = 0; r < SIZE; r++) {
-    el.appendChild(cellEl("cell label", r + 1));
+    container.appendChild(cellEl("cell label", r + 1));
     const row = [];
     for (let c = 0; c < SIZE; c++) {
       const d = cellEl("cell");
@@ -135,18 +192,19 @@ function buildGrid(el, hooks) {
         d.addEventListener("dragover", (e) => { e.preventDefault(); hooks.onEnter(r, c); });
         d.addEventListener("drop", (e) => { e.preventDefault(); hooks.onDrop(r, c); });
       }
-      el.appendChild(d);
+      container.appendChild(d);
       row.push(d);
     }
     cells.push(row);
   }
-  if (hooks.onLeave) el.addEventListener("mouseleave", hooks.onLeave);
-  gridCells.set(el, cells);
+  if (hooks.onLeave) container.addEventListener("mouseleave", hooks.onLeave);
+  gridCells.set(container, cells);
 }
 
-function buildBoard(el, board, { reveal, placing }) {
-  el.classList.toggle("placing", !!placing);
-  const cells = gridCells.get(el);
+function buildBoard(container, board, { reveal, placing }) {
+  container.classList.toggle("placing", !!placing);
+  const cells = gridCells.get(container);
+  if (!cells) throw new Error("buildBoard: the grid skeleton has not been built");
   for (let r = 0; r < SIZE; r++) {
     for (let c = 0; c < SIZE; c++) {
       const d = cells[r][c];
@@ -164,21 +222,22 @@ function buildBoard(el, board, { reveal, placing }) {
   }
 }
 
-function buildFleetList(el) {
+function buildFleetList(container) {
   const items = new Map();
   for (const spec of FLEET) {
     const li = document.createElement("li");
     li.dataset.ship = spec.name;
     li.addEventListener("dragstart", () => { if (li.draggable) state.dragging = spec.name; });
     li.addEventListener("dragend", () => { state.dragging = null; clearPreview(); });
-    el.appendChild(li);
+    container.appendChild(li);
     items.set(spec.name, li);
   }
-  fleetItems.set(el, items);
+  fleetItems.set(container, items);
 }
 
-function fleetList(el, board, hideIntact, draggable) {
-  const items = fleetItems.get(el);
+function fleetList(container, board, hideIntact, draggable) {
+  const items = fleetItems.get(container);
+  if (!items) throw new Error("fleetList: the fleet list skeleton has not been built");
   for (const spec of FLEET) {
     const ship = board.ships.find((s) => s.name === spec.name);
     const li = items.get(spec.name);
@@ -197,35 +256,51 @@ function fleetList(el, board, hideIntact, draggable) {
 const scoreboard = () => ({ you: accuracy(state.enemy), foe: accuracy(state.player) });
 
 function statsTable(playerShotsFired, enemyShotsFired) {
-  const el = byId("stats");
+  const box = el("stats");
   if (!playerShotsFired && !enemyShotsFired) {
-    el.innerHTML = "";
+    box.textContent = "";
     return;
   }
   const { you, foe } = scoreboard();
-  el.innerHTML = `
-    <table>
-      <tr><th></th><th>Shots</th><th>Hits</th><th>Accuracy</th><th>Sunk</th></tr>
-      <tr><td>You</td><td>${you.shots}</td><td>${you.hits}</td><td>${you.pct}%</td><td>${sunkCount(state.enemy)}/5</td></tr>
-      <tr><td>Enemy</td><td>${foe.shots}</td><td>${foe.hits}</td><td>${foe.pct}%</td><td>${sunkCount(state.player)}/5</td></tr>
-    </table>
-    ${state.over ? `<div class="summary">${state.summary}</div>` : ""}`;
+  box.textContent = "";
+  const table = document.createElement("table");
+  const row = (tag, cells) => {
+    const tr = document.createElement("tr");
+    for (const value of cells) {
+      const td = document.createElement(tag);
+      td.textContent = value;
+      tr.appendChild(td);
+    }
+    table.appendChild(tr);
+  };
+  row("th", ["", "Shots", "Hits", "Accuracy", "Sunk"]);
+  row("td", ["You", you.shots, you.hits, `${you.pct}%`, `${sunkCount(state.enemy)}/5`]);
+  row("td", ["Enemy", foe.shots, foe.hits, `${foe.pct}%`, `${sunkCount(state.player)}/5`]);
+  box.appendChild(table);
+  if (state.over) {
+    const summary = document.createElement("div");
+    summary.className = "summary";
+    summary.textContent = state.summary;
+    box.appendChild(summary);
+  }
 }
 
 function render() {
   const placing = !placementDone();
   const playerShotsFired = hasShots(state.player);
   const enemyShotsFired = hasShots(state.enemy);
-  buildBoard(byId("player"), state.player, { reveal: true, placing });
-  buildBoard(byId("enemy"), state.enemy, { reveal: false });
-  fleetList(byId("playerFleet"), state.player, false, placing);
-  fleetList(byId("enemyFleet"), state.enemy, true, false);
-  byId("rotate").textContent = "Rotate: " + (state.horizontal ? "horizontal" : "vertical");
-  byId("rotate").disabled = !placing;
-  byId("random").disabled = !placing;
-  byId("undo").disabled = !state.player.ships.length || playerShotsFired;
-  byId("difficulty").disabled = !placing;
-  byId("status").textContent = state.over
+  buildBoard(el("player"), state.player, { reveal: true, placing });
+  buildBoard(el("enemy"), state.enemy, { reveal: false });
+  fleetList(el("playerFleet"), state.player, false, placing);
+  fleetList(el("enemyFleet"), state.enemy, true, false);
+  el("rotate").textContent =
+    "Rotate: " + (state.horizontal ? "horizontal" : "vertical");
+  el("rotate").disabled = !placing;
+  el("random").disabled = !placing;
+  el("undo").disabled =
+    !state.player.ships.length || playerShotsFired;
+  el("difficulty").disabled = !placing;
+  el("status").textContent = state.over
     ? state.winner
     : placing
     ? `Placing ${placingSpec().name} (${placingSpec().size})`
@@ -242,12 +317,12 @@ function render() {
 // mouse events the preview depends on.
 function applyPreview() {
   const cells = previewCells();
-  document.querySelectorAll("#player .cell").forEach((el) => {
-    el.classList.remove("preview-ok", "preview-bad");
+  document.querySelectorAll("#player .cell").forEach((node) => {
+    node.classList.remove("preview-ok", "preview-bad");
   });
   for (const [r, c, ok] of cells) {
-    const el = document.querySelector(`#player .cell[data-coord="${coord(r, c)}"]`);
-    if (el) el.classList.add(ok ? "preview-ok" : "preview-bad");
+    const node = document.querySelector(`#player .cell[data-coord="${coord(r, c)}"]`);
+    if (node) node.classList.add(ok ? "preview-ok" : "preview-bad");
   }
 }
 
@@ -276,18 +351,23 @@ function onDrop(r, c) {
   state.dragging = null;
   state.preview = null;
   const spec = FLEET.find((s) => s.name === name);
-  if (spec && !isPlaced(spec.name)) placeShip(spec, r, c, state.horizontal);
+  if (!spec) rejected(name ? `Unknown ship "${name}" — drop ignored.` : "Nothing was being dragged.");
+  else if (isPlaced(spec.name)) rejected(`The ${spec.name} is already on the board.`);
+  else placeShip(spec, r, c, state.horizontal);
   render();
 }
 
-// "<lead> at C5 — HIT! You sank their Cruiser!"
-function logShot(lead, r, c, res, sunkSuffix) {
+// "<lead> at C5 — HIT! You sank their Cruiser!", plus the matching sound.
+function announceShot(lead, r, c, res, sunkSuffix) {
+  sound.play("fire");
+  shotSound(res.result);
   const outcome = res.result === "miss" ? "miss" : "HIT";
   const suffix = res.result === "sunk" ? sunkSuffix(res.ship.name) : "";
   log(`${lead} at ${coord(r, c)} — ${outcome}${suffix}`);
 }
 
-function endGame(winner, summaryLead) {
+function endGame(winner, summaryLead, effect) {
+  sound.play(effect);
   state.over = true;
   state.winner = winner;
   const { you, foe } = scoreboard();
@@ -299,10 +379,16 @@ function endGame(winner, summaryLead) {
 
 function onFireClick(r, c) {
   if (state.over || state.turn !== "player") return;
-  const res = fire(state.enemy, r, c);
-  if (!res) return;
-  logShot("You fire", r, c, res, (name) => `! You sank their ${name}!`);
-  if (allSunk(state.enemy)) { endGame("You win!", "All enemy ships sunk."); return; }
+  let res;
+  try {
+    res = fire(state.enemy, r, c);
+  } catch (err) {
+    reportError(`firing at ${coord(r, c)}`, err);
+    return;
+  }
+  if (!res) { rejected(`You already fired at ${coord(r, c)} — pick another cell.`); return; }
+  announceShot("You fire", r, c, res, (name) => `! You sank their ${name}!`);
+  if (allSunk(state.enemy)) { endGame("You win!", "All enemy ships sunk.", "win"); return; }
   state.turn = "enemy";
   render();
   const game = state;
@@ -310,15 +396,29 @@ function onFireClick(r, c) {
 }
 
 function enemyTurn() {
+  try {
+    takeEnemyTurn();
+  } catch (err) {
+    // A crash inside the timer would otherwise leave the turn stuck on the enemy.
+    reportError("the enemy's turn", err);
+    state.turn = "player";
+    render();
+  }
+}
+
+function takeEnemyTurn() {
   state.timer = null;
   const target = aiChoose(state.ai, state.player, { difficulty: state.difficulty });
-  if (!target) return;
+  if (!target) {
+    endGame("Draw — no cells left.", "The enemy has nowhere left to fire.", "lose");
+    return;
+  }
   const [r, c] = target;
   const res = fire(state.player, r, c);
-  if (!res) return;
-  logShot("Enemy fires", r, c, res, (name) => `! Your ${name} is sunk!`);
+  if (!res) throw new Error(`the AI picked ${coord(r, c)}, which it had already fired at`);
+  announceShot("Enemy fires", r, c, res, (name) => `! Your ${name} is sunk!`);
   aiObserve(state.ai, r, c, res);
-  if (allSunk(state.player)) { endGame("Enemy wins!", "Your fleet is destroyed."); return; }
+  if (allSunk(state.player)) { endGame("Enemy wins!", "Your fleet is destroyed.", "lose"); return; }
   state.turn = "player";
   render();
 }
@@ -326,15 +426,26 @@ function enemyTurn() {
 // Test hook: read-only access to the live game state.
 window.__battleship = { get state() { return state; }, newGame, render, onPlaceClick, onFireClick };
 
-byId("new").addEventListener("click", newGame);
-byId("random").addEventListener("click", randomPlacement);
-byId("undo").addEventListener("click", undoLastShip);
-byId("difficulty").addEventListener("change", (e) => {
-  state.difficulty = e.target.value;
-  state.ai.difficulty = e.target.value;
-  log(`Difficulty set to ${e.target.value}.`);
+el("new").addEventListener("click", newGame);
+el("random").addEventListener("click", randomPlacement);
+el("undo").addEventListener("click", undoLastShip);
+el("difficulty").addEventListener("change", (e) => {
+  const value = e.target.value;
+  if (!DIFFICULTIES.includes(value)) {
+    reportError("changing difficulty", new RangeError(`unknown difficulty "${value}"`));
+    e.target.value = state.difficulty;
+    return;
+  }
+  state.difficulty = value;
+  state.ai.difficulty = value;
+  log(`Difficulty set to ${value}.`);
 });
-byId("rotate").addEventListener("click", rotate);
+el("rotate").addEventListener("click", rotate);
+el("mute").addEventListener("click", () => {
+  sound.setMuted(!sound.muted);
+  renderMuteButton();
+  log(sound.muted ? "Sound off." : "Sound on.");
+});
 window.addEventListener("keydown", (e) => {
   if (e.ctrlKey || e.altKey || e.metaKey) return;
   if (e.key && e.key.toLowerCase() === "r") rotate();
@@ -346,4 +457,14 @@ function rotate() {
   render();
 }
 
+function renderMuteButton() {
+  const button = el("mute");
+  button.textContent = sound.available
+    ? `Sound: ${sound.muted ? "off" : "on"}`
+    : "Sound: unavailable";
+  button.setAttribute("aria-pressed", String(sound.muted));
+  button.disabled = !sound.available;
+}
+
+renderMuteButton();
 newGame();

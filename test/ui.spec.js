@@ -124,6 +124,17 @@ test.describe("firing", () => {
     await cell(page, "enemy", "J10").click();
     const shotsAfter = await state(page, () => __battleship.state.enemy.shots.flat().filter(Boolean).length);
     expect(shotsAfter).toBe(shotsBefore);
+    expect(await logText(page)).toContain("You already fired at J10");
+  });
+
+  test("a failure during the enemy turn is reported and hands the turn back", async ({ page }) => {
+    await state(page, () => {
+      __battleship.state.difficulty = "nightmare";
+      __battleship.state.turn = "player";
+    });
+    await cell(page, "enemy", "J10").click();
+    await expect(page.locator("#log")).toContainText("Something went wrong (the enemy's turn)");
+    expect(await state(page, () => __battleship.state.turn)).toBe("player");
   });
 
   test("F5/F6: turns stay alternating under rapid clicking", async ({ page }) => {
@@ -320,5 +331,36 @@ test.describe("lifecycle", () => {
     await placeFleet(page);
     await page.reload();
     expect(await status(page)).toContain("Placing Carrier");
+  });
+});
+
+test.describe("sound", () => {
+  test("A1: the mute button toggles sound and the label follows it", async ({ page }) => {
+    await page.goto(fast);
+    const mute = page.locator("#mute");
+    await expect(mute).toHaveText("Sound: on");
+    await mute.click();
+    await expect(mute).toHaveText("Sound: off");
+    await expect(mute).toHaveAttribute("aria-pressed", "true");
+    expect(await logText(page)).toContain("Sound off.");
+    expect(await state(page, () => sound.muted)).toBe(true);
+    await mute.click();
+    await expect(mute).toHaveText("Sound: on");
+    expect(await state(page, () => sound.muted)).toBe(false);
+  });
+
+  test("A2: firing plays a shot effect without disturbing the game", async ({ page }) => {
+    await page.goto(fast);
+    await state(page, () => {
+      window.__played = [];
+      const play = sound.play;
+      sound.play = (name) => { window.__played.push(name); return play(name); };
+    });
+    await placeFleet(page);
+    await cell(page, "enemy", "A1").click();
+    const played = await state(page, () => window.__played);
+    expect(played.filter((n) => n === "place")).toHaveLength(5);
+    expect(played).toContain("fire");
+    expect(played.some((n) => ["hit", "miss", "sunk"].includes(n))).toBe(true);
   });
 });

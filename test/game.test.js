@@ -38,6 +38,25 @@ test("fire returns miss, hit, sunk, and null for repeats", () => {
   assert.ok(g.allSunk(b));
 });
 
+test("invalid input fails loudly instead of corrupting the board", () => {
+  const b = g.emptyBoard();
+  assert.throws(() => g.fire(b, -1, 0), RangeError);
+  assert.throws(() => g.fire(b, 0, 10), RangeError);
+  assert.throws(() => g.fire(b, 1.5, 0), RangeError);
+  assert.throws(() => g.place(b, shipSpec("Carrier"), g.cellsFor(0, 7, 5, true)), RangeError);
+  assert.throws(() => g.place(b, shipSpec("Carrier"), g.cellsFor(0, 0, 3, true)), RangeError);
+  assert.throws(() => g.makeAI("impossible"), RangeError);
+  assert.throws(() => g.aiChoose(g.makeAI(), b, { difficulty: "nightmare" }), RangeError);
+  assert.throws(() => g.aiObserve(g.makeAI(), 0, 0, { result: "sunk" }), TypeError);
+  assert.equal(b.ships.length, 0, "no partial state left behind");
+});
+
+test("randomPlace gives up loudly on a board with no room", () => {
+  const b = g.emptyBoard();
+  for (let r = 0; r < 10; r++) g.place(b, { name: "Filler", size: 10 }, g.cellsFor(r, 0, 10, true));
+  assert.throws(() => g.randomPlace(b, shipSpec("Destroyer")), /no legal position/);
+});
+
 test("allSunk is false while any ship is afloat", () => {
   const b = g.emptyBoard();
   g.place(b, shipSpec("Destroyer"), g.cellsFor(0, 0, 2, true));

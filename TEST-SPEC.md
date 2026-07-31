@@ -96,6 +96,13 @@ Each case is `id — action → expected`.
 | L3 | Fire, then click New game within 600ms | No AI shot ever appears in the new game's log (**currently fails — Bug 1**) |
 | L4 | Reload the page | Fresh game (no persistence is expected) |
 
+### Sound
+
+| id | Action | Expected |
+|---|---|---|
+| A1 | Click the sound button | Label and `aria-pressed` toggle, `sound.muted` follows, log records it |
+| A2 | Place the fleet and fire a shot | A `place` effect per ship, then `fire` plus a hit/miss/sunk effect |
+
 ## 4. Bug reproductions
 
 ### B1 — Stale AI shot survives "New game" (high)
