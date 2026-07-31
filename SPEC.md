@@ -154,7 +154,8 @@ results and the sinkings announced to it — never the hidden grid.
 ## 10. Non-Goals (prototype)
 
 - No two-player / networked play, no accounts, no persistence across reloads.
-- No animations, background music, or mobile-specific layout.
+- No gameplay animations (beyond the decorative radar-sweep backdrop on the
+  target grid during the firing phase), background music, or mobile-specific layout.
 
 ## 11. Open Items / Next Steps
 

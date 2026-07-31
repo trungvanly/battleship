@@ -300,6 +300,7 @@ function render() {
   const enemyShotsFired = hasShots(state.enemy);
   buildBoard(el("player"), state.player, { reveal: true, placing });
   buildBoard(el("enemy"), state.enemy, { reveal: false });
+  el("enemy").classList.toggle("battle", !placing);
   fleetList(el("playerFleet"), state.player, false, placing);
   fleetList(el("enemyFleet"), state.enemy, true, false);
   el("rotate").textContent =
