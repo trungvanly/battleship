@@ -130,6 +130,9 @@ const sound = (() => {
     const ac = audio();
     if (!ac) return;
     try {
+      // A throttled timer (hidden tab) can leave the cursor in the past; pick the
+      // loop back up from now rather than dumping every missed bar out at once.
+      if (music.nextBar < ac.currentTime) music.nextBar = ac.currentTime + 0.05;
       while (music.nextBar < ac.currentTime + BAR * 2) {
         scheduleBar(ac, music.bar++, music.nextBar);
         music.nextBar += BAR;
