@@ -19,6 +19,14 @@ const AI_DELAY_MS = parseDelay(new URLSearchParams(location.search).get("delay")
 
 let state;
 
+// <div class="cell ...">text</div>, the unit every grid is built from.
+function cellEl(classes, text) {
+  const d = document.createElement("div");
+  d.className = classes;
+  if (text !== undefined) d.textContent = text;
+  return d;
+}
+
 // Every DOM lookup goes through here so a missing element is an immediate,
 // named failure instead of a downstream "cannot read property of null".
 function el(id) {
@@ -129,7 +137,7 @@ function placeShip(spec, r, c, horizontal) {
 function randomPlacement() {
   if (placementDone()) return;
   try {
-    for (const spec of unplaced()) randomPlace(state.player, spec);
+    placeRandomly(state.player, unplaced());
   } catch (err) {
     reportError("placing the fleet randomly", err);
     render();
@@ -143,7 +151,7 @@ function randomPlacement() {
 
 function undoLastShip() {
   if (!state.player.ships.length) { rejected("Nothing to undo — no ships placed yet."); return; }
-  if (state.player.shots.flat().some(Boolean)) {
+  if (hasShots(state.player)) {
     rejected("Ships cannot be moved once the shooting has started.");
     return;
   }
@@ -169,25 +177,14 @@ const gridCells = new WeakMap();
 const fleetItems = new WeakMap();
 
 function buildGrid(container, hooks) {
-  const head = document.createElement("div");
-  head.className = "cell label";
-  container.appendChild(head);
-  LETTERS.forEach((L) => {
-    const d = document.createElement("div");
-    d.className = "cell label";
-    d.textContent = L;
-    container.appendChild(d);
-  });
+  container.appendChild(cellEl("cell label"));
+  LETTERS.forEach((L) => container.appendChild(cellEl("cell label", L)));
   const cells = [];
   for (let r = 0; r < SIZE; r++) {
-    const rowLabel = document.createElement("div");
-    rowLabel.className = "cell label";
-    rowLabel.textContent = r + 1;
-    container.appendChild(rowLabel);
+    container.appendChild(cellEl("cell label", r + 1));
     const row = [];
     for (let c = 0; c < SIZE; c++) {
-      const d = document.createElement("div");
-      d.className = "cell";
+      const d = cellEl("cell");
       d.dataset.coord = coord(r, c);
       d.addEventListener("click", () => hooks.onClick(r, c));
       if (hooks.onEnter) {
@@ -216,7 +213,7 @@ function buildBoard(container, board, { reveal, placing }) {
       let cls = "cell";
       if (reveal && ship) cls += " ship";
       if (shot === "miss") cls += " miss shot";
-      if (shot === "hit") cls += ship && ship.hits === ship.size ? " sunk shot" : " hit shot";
+      if (shot === "hit") cls += isSunk(ship) ? " sunk shot" : " hit shot";
       // applyPreview() owns the preview classes; keep whatever it last set.
       if (d.classList.contains("preview-ok")) cls += " preview-ok";
       else if (d.classList.contains("preview-bad")) cls += " preview-bad";
@@ -244,7 +241,7 @@ function fleetList(container, board, hideIntact, draggable) {
   for (const spec of FLEET) {
     const ship = board.ships.find((s) => s.name === spec.name);
     const li = items.get(spec.name);
-    const sunk = ship && ship.hits === ship.size;
+    const sunk = isSunk(ship);
     const cls = sunk ? "sunk" : "";
     if (li.className !== cls) li.className = cls;
     const detail = sunk ? "SUNK" : hideIntact ? "" : ship ? `${ship.hits}/${ship.size} hits` : "not placed";
@@ -255,15 +252,16 @@ function fleetList(container, board, hideIntact, draggable) {
   }
 }
 
+// Your shots land on the enemy board and vice versa.
+const scoreboard = () => ({ you: accuracy(state.enemy), foe: accuracy(state.player) });
+
 function statsTable(playerShotsFired, enemyShotsFired) {
   const box = el("stats");
   if (!playerShotsFired && !enemyShotsFired) {
     box.textContent = "";
     return;
   }
-  const you = accuracy(state.enemy);   // your shots land on the enemy board
-  const foe = accuracy(state.player);
-  const sunkBy = (board) => board.ships.filter((s) => s.hits === s.size).length;
+  const { you, foe } = scoreboard();
   box.textContent = "";
   const table = document.createElement("table");
   const row = (tag, cells) => {
@@ -276,8 +274,8 @@ function statsTable(playerShotsFired, enemyShotsFired) {
     table.appendChild(tr);
   };
   row("th", ["", "Shots", "Hits", "Accuracy", "Sunk"]);
-  row("td", ["You", you.shots, you.hits, `${you.pct}%`, `${sunkBy(state.enemy)}/5`]);
-  row("td", ["Enemy", foe.shots, foe.hits, `${foe.pct}%`, `${sunkBy(state.player)}/5`]);
+  row("td", ["You", you.shots, you.hits, `${you.pct}%`, `${sunkCount(state.enemy)}/5`]);
+  row("td", ["Enemy", foe.shots, foe.hits, `${foe.pct}%`, `${sunkCount(state.player)}/5`]);
   box.appendChild(table);
   if (state.over) {
     const summary = document.createElement("div");
@@ -289,8 +287,8 @@ function statsTable(playerShotsFired, enemyShotsFired) {
 
 function render() {
   const placing = !placementDone();
-  const playerShotsFired = state.player.shots.flat().some(Boolean);
-  const enemyShotsFired = state.enemy.shots.flat().some(Boolean);
+  const playerShotsFired = hasShots(state.player);
+  const enemyShotsFired = hasShots(state.enemy);
   buildBoard(el("player"), state.player, { reveal: true, placing });
   buildBoard(el("enemy"), state.enemy, { reveal: false });
   fleetList(el("playerFleet"), state.player, false, placing);
@@ -359,12 +357,20 @@ function onDrop(r, c) {
   render();
 }
 
+// "<lead> at C5 — HIT! You sank their Cruiser!", plus the matching sound.
+function announceShot(lead, r, c, res, sunkSuffix) {
+  sound.play("fire");
+  shotSound(res.result);
+  const outcome = res.result === "miss" ? "miss" : "HIT";
+  const suffix = res.result === "sunk" ? sunkSuffix(res.ship.name) : "";
+  log(`${lead} at ${coord(r, c)} — ${outcome}${suffix}`);
+}
+
 function endGame(winner, summaryLead, effect) {
   sound.play(effect);
   state.over = true;
   state.winner = winner;
-  const you = accuracy(state.enemy);
-  const foe = accuracy(state.player);
+  const { you, foe } = scoreboard();
   state.summary = `${summaryLead} You: ${you.hits}/${you.shots} hits (${you.pct}%). ` +
     `Enemy: ${foe.hits}/${foe.shots} hits (${foe.pct}%). Difficulty: ${state.difficulty}.`;
   log(state.summary);
@@ -381,9 +387,7 @@ function onFireClick(r, c) {
     return;
   }
   if (!res) { rejected(`You already fired at ${coord(r, c)} — pick another cell.`); return; }
-  sound.play("fire");
-  shotSound(res.result);
-  log(`You fire at ${coord(r, c)} — ${res.result === "miss" ? "miss" : "HIT"}${res.result === "sunk" ? `! You sank their ${res.ship.name}!` : ""}`);
+  announceShot("You fire", r, c, res, (name) => `! You sank their ${name}!`);
   if (allSunk(state.enemy)) { endGame("You win!", "All enemy ships sunk.", "win"); return; }
   state.turn = "enemy";
   render();
@@ -412,9 +416,7 @@ function takeEnemyTurn() {
   const [r, c] = target;
   const res = fire(state.player, r, c);
   if (!res) throw new Error(`the AI picked ${coord(r, c)}, which it had already fired at`);
-  sound.play("fire");
-  shotSound(res.result);
-  log(`Enemy fires at ${coord(r, c)} — ${res.result === "miss" ? "miss" : "HIT"}${res.result === "sunk" ? `! Your ${res.ship.name} is sunk!` : ""}`);
+  announceShot("Enemy fires", r, c, res, (name) => `! Your ${name} is sunk!`);
   aiObserve(state.ai, r, c, res);
   if (allSunk(state.player)) { endGame("Enemy wins!", "Your fleet is destroyed.", "lose"); return; }
   state.turn = "player";
