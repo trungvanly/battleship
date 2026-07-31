@@ -1,7 +1,18 @@
 // DOM layer: rendering, input handling, and turn sequencing. Rules live in game.js.
 
-// Tests can shorten the AI's thinking time with ?delay=0.
-const AI_DELAY_MS = Number(new URLSearchParams(location.search).get("delay") ?? 600);
+// Tests can shorten the AI's thinking time with ?delay=0. Anything that is not a
+// finite number in [0, MAX_AI_DELAY_MS] falls back to the default.
+const DEFAULT_AI_DELAY_MS = 600;
+const MAX_AI_DELAY_MS = 10000;
+
+function parseDelay(raw) {
+  if (raw === null) return DEFAULT_AI_DELAY_MS;
+  const n = Number(raw);
+  if (!Number.isFinite(n) || n < 0 || n > MAX_AI_DELAY_MS) return DEFAULT_AI_DELAY_MS;
+  return n;
+}
+
+const AI_DELAY_MS = parseDelay(new URLSearchParams(location.search).get("delay"));
 
 let state;
 
@@ -21,7 +32,7 @@ function newGame() {
     dragging: null,
   };
   randomFleet(state.enemy);
-  document.getElementById("log").innerHTML = "";
+  document.getElementById("log").textContent = "";
   log("Place your fleet: click or drag a ship onto your ocean grid.");
   render();
 }
@@ -93,7 +104,7 @@ function previewCells() {
 }
 
 function buildBoard(el, board, { reveal, onClick, placing }) {
-  el.innerHTML = "";
+  el.textContent = "";
   el.classList.toggle("placing", !!placing);
   const preview = placing ? previewCells() : [];
   const head = document.createElement("div");
@@ -136,7 +147,7 @@ function buildBoard(el, board, { reveal, onClick, placing }) {
 }
 
 function fleetList(el, board, hideIntact, draggable) {
-  el.innerHTML = "";
+  el.textContent = "";
   for (const spec of FLEET) {
     const ship = board.ships.find((s) => s.name === spec.name);
     const li = document.createElement("li");
@@ -157,19 +168,33 @@ function fleetList(el, board, hideIntact, draggable) {
 function statsTable() {
   const el = document.getElementById("stats");
   if (!state.player.shots.flat().some(Boolean) && !state.enemy.shots.flat().some(Boolean)) {
-    el.innerHTML = "";
+    el.textContent = "";
     return;
   }
   const you = accuracy(state.enemy);   // your shots land on the enemy board
   const foe = accuracy(state.player);
   const sunkBy = (board) => board.ships.filter((s) => s.hits === s.size).length;
-  el.innerHTML = `
-    <table>
-      <tr><th></th><th>Shots</th><th>Hits</th><th>Accuracy</th><th>Sunk</th></tr>
-      <tr><td>You</td><td>${you.shots}</td><td>${you.hits}</td><td>${you.pct}%</td><td>${sunkBy(state.enemy)}/5</td></tr>
-      <tr><td>Enemy</td><td>${foe.shots}</td><td>${foe.hits}</td><td>${foe.pct}%</td><td>${sunkBy(state.player)}/5</td></tr>
-    </table>
-    ${state.over ? `<div class="summary">${state.summary}</div>` : ""}`;
+  el.textContent = "";
+  const table = document.createElement("table");
+  const row = (tag, cells) => {
+    const tr = document.createElement("tr");
+    for (const value of cells) {
+      const td = document.createElement(tag);
+      td.textContent = value;
+      tr.appendChild(td);
+    }
+    table.appendChild(tr);
+  };
+  row("th", ["", "Shots", "Hits", "Accuracy", "Sunk"]);
+  row("td", ["You", you.shots, you.hits, `${you.pct}%`, `${sunkBy(state.enemy)}/5`]);
+  row("td", ["Enemy", foe.shots, foe.hits, `${foe.pct}%`, `${sunkBy(state.player)}/5`]);
+  el.appendChild(table);
+  if (state.over) {
+    const summary = document.createElement("div");
+    summary.className = "summary";
+    summary.textContent = state.summary;
+    el.appendChild(summary);
+  }
 }
 
 function render() {
