@@ -51,9 +51,30 @@ function newGame() {
     dragging: null,
   };
   randomFleet(state.enemy);
+  buildSkeleton();
   el("log").innerHTML = "";
   log("Place your fleet: click or drag a ship onto your ocean grid.");
   render();
+}
+
+// The grids and fleet lists are structural: they are created on the first game and
+// then reused for the life of the page.
+function buildSkeleton() {
+  const player = el("player");
+  if (gridCells.has(player)) return;
+  buildGrid(player, {
+    onClick: (r, c) => { if (!placementDone()) onPlaceClick(r, c); },
+    onEnter: (r, c) => { if (!placementDone()) showPreview(r, c); },
+    onDrop: (r, c) => { if (!placementDone()) onDrop(r, c); },
+    onLeave: clearPreview,
+  });
+  buildGrid(el("enemy"), {
+    onClick: (r, c) => {
+      if (placementDone() && !state.over && state.turn === "player") onFireClick(r, c);
+    },
+  });
+  buildFleetList(el("playerFleet"));
+  buildFleetList(el("enemyFleet"));
 }
 
 function log(msg) {
@@ -128,10 +149,12 @@ function previewCells() {
   return cells.filter(([r, c]) => r < SIZE && c < SIZE).map(([r, c]) => [r, c, ok]);
 }
 
-function buildBoard(container, board, { reveal, onClick, placing }) {
-  container.innerHTML = "";
-  container.classList.toggle("placing", !!placing);
-  const preview = placing ? previewCells() : [];
+// Cell nodes are created once per grid and reused; renders only touch classNames,
+// so listeners survive and a hover is never interrupted by a rebuild.
+const gridCells = new WeakMap();
+const fleetItems = new WeakMap();
+
+function buildGrid(container, hooks) {
   const head = document.createElement("div");
   head.className = "cell label";
   container.appendChild(head);
@@ -141,58 +164,86 @@ function buildBoard(container, board, { reveal, onClick, placing }) {
     d.textContent = L;
     container.appendChild(d);
   });
+  const cells = [];
   for (let r = 0; r < SIZE; r++) {
     const rowLabel = document.createElement("div");
     rowLabel.className = "cell label";
     rowLabel.textContent = r + 1;
     container.appendChild(rowLabel);
+    const row = [];
     for (let c = 0; c < SIZE; c++) {
       const d = document.createElement("div");
       d.className = "cell";
       d.dataset.coord = coord(r, c);
-      const ship = board.grid[r][c];
-      const shot = board.shots[r][c];
-      if (reveal && ship) d.classList.add("ship");
-      if (shot === "miss") d.classList.add("miss", "shot");
-      if (shot === "hit") {
-        d.classList.add(ship && ship.hits === ship.size ? "sunk" : "hit", "shot");
-      }
-      const hint = preview.find(([pr, pc]) => pr === r && pc === c);
-      if (hint) d.classList.add(hint[2] ? "preview-ok" : "preview-bad");
-      if (onClick) d.addEventListener("click", () => onClick(r, c));
-      if (placing) {
-        d.addEventListener("mouseenter", () => showPreview(r, c));
-        d.addEventListener("dragover", (e) => { e.preventDefault(); showPreview(r, c); });
-        d.addEventListener("drop", (e) => { e.preventDefault(); onDrop(r, c); });
+      d.addEventListener("click", () => hooks.onClick(r, c));
+      if (hooks.onEnter) {
+        d.addEventListener("mouseenter", () => hooks.onEnter(r, c));
+        d.addEventListener("dragover", (e) => { e.preventDefault(); hooks.onEnter(r, c); });
+        d.addEventListener("drop", (e) => { e.preventDefault(); hooks.onDrop(r, c); });
       }
       container.appendChild(d);
+      row.push(d);
+    }
+    cells.push(row);
+  }
+  if (hooks.onLeave) container.addEventListener("mouseleave", hooks.onLeave);
+  gridCells.set(container, cells);
+}
+
+function buildBoard(container, board, { reveal, placing }) {
+  container.classList.toggle("placing", !!placing);
+  const cells = gridCells.get(container);
+  if (!cells) throw new Error("buildBoard: the grid skeleton has not been built");
+  for (let r = 0; r < SIZE; r++) {
+    for (let c = 0; c < SIZE; c++) {
+      const d = cells[r][c];
+      const ship = board.grid[r][c];
+      const shot = board.shots[r][c];
+      let cls = "cell";
+      if (reveal && ship) cls += " ship";
+      if (shot === "miss") cls += " miss shot";
+      if (shot === "hit") cls += ship && ship.hits === ship.size ? " sunk shot" : " hit shot";
+      // applyPreview() owns the preview classes; keep whatever it last set.
+      if (d.classList.contains("preview-ok")) cls += " preview-ok";
+      else if (d.classList.contains("preview-bad")) cls += " preview-bad";
+      if (d.className !== cls) d.className = cls;
     }
   }
-  if (placing) container.addEventListener("mouseleave", clearPreview);
+}
+
+function buildFleetList(container) {
+  const items = new Map();
+  for (const spec of FLEET) {
+    const li = document.createElement("li");
+    li.dataset.ship = spec.name;
+    li.addEventListener("dragstart", () => { if (li.draggable) state.dragging = spec.name; });
+    li.addEventListener("dragend", () => { state.dragging = null; clearPreview(); });
+    container.appendChild(li);
+    items.set(spec.name, li);
+  }
+  fleetItems.set(container, items);
 }
 
 function fleetList(container, board, hideIntact, draggable) {
-  container.innerHTML = "";
+  const items = fleetItems.get(container);
+  if (!items) throw new Error("fleetList: the fleet list skeleton has not been built");
   for (const spec of FLEET) {
     const ship = board.ships.find((s) => s.name === spec.name);
-    const li = document.createElement("li");
+    const li = items.get(spec.name);
     const sunk = ship && ship.hits === ship.size;
-    li.className = sunk ? "sunk" : "";
-    li.dataset.ship = spec.name;
+    const cls = sunk ? "sunk" : "";
+    if (li.className !== cls) li.className = cls;
     const detail = sunk ? "SUNK" : hideIntact ? "" : ship ? `${ship.hits}/${ship.size} hits` : "not placed";
-    li.textContent = `${spec.name} (${spec.size})${detail ? " — " + detail : ""}`;
-    if (draggable && !ship) {
-      li.draggable = true;
-      li.addEventListener("dragstart", () => { state.dragging = spec.name; });
-      li.addEventListener("dragend", () => { state.dragging = null; clearPreview(); });
-    }
-    container.appendChild(li);
+    const text = `${spec.name} (${spec.size})${detail ? " — " + detail : ""}`;
+    if (li.textContent !== text) li.textContent = text;
+    const canDrag = !!draggable && !ship;
+    if (li.draggable !== canDrag) li.draggable = canDrag;
   }
 }
 
-function statsTable() {
+function statsTable(playerShotsFired, enemyShotsFired) {
   const box = el("stats");
-  if (!state.player.shots.flat().some(Boolean) && !state.enemy.shots.flat().some(Boolean)) {
+  if (!playerShotsFired && !enemyShotsFired) {
     box.innerHTML = "";
     return;
   }
@@ -210,15 +261,10 @@ function statsTable() {
 
 function render() {
   const placing = !placementDone();
-  buildBoard(el("player"), state.player, {
-    reveal: true,
-    onClick: placing ? onPlaceClick : null,
-    placing,
-  });
-  buildBoard(el("enemy"), state.enemy, {
-    reveal: false,
-    onClick: !placing && !state.over && state.turn === "player" ? onFireClick : null,
-  });
+  const playerShotsFired = state.player.shots.flat().some(Boolean);
+  const enemyShotsFired = state.enemy.shots.flat().some(Boolean);
+  buildBoard(el("player"), state.player, { reveal: true, placing });
+  buildBoard(el("enemy"), state.enemy, { reveal: false });
   fleetList(el("playerFleet"), state.player, false, placing);
   fleetList(el("enemyFleet"), state.enemy, true, false);
   el("rotate").textContent =
@@ -226,7 +272,7 @@ function render() {
   el("rotate").disabled = !placing;
   el("random").disabled = !placing;
   el("undo").disabled =
-    !state.player.ships.length || state.player.shots.flat().some(Boolean);
+    !state.player.ships.length || playerShotsFired;
   el("difficulty").disabled = !placing;
   el("status").textContent = state.over
     ? state.winner
@@ -235,7 +281,7 @@ function render() {
     : state.turn === "player"
     ? "Your turn — fire at the target grid"
     : "Enemy is firing...";
-  statsTable();
+  statsTable(playerShotsFired, enemyShotsFired);
   applyPreview();
 }
 
@@ -245,12 +291,12 @@ function render() {
 // mouse events the preview depends on.
 function applyPreview() {
   const cells = previewCells();
-  document.querySelectorAll("#player .cell").forEach((el) => {
-    el.classList.remove("preview-ok", "preview-bad");
+  document.querySelectorAll("#player .cell").forEach((node) => {
+    node.classList.remove("preview-ok", "preview-bad");
   });
   for (const [r, c, ok] of cells) {
-    const el = document.querySelector(`#player .cell[data-coord="${coord(r, c)}"]`);
-    if (el) el.classList.add(ok ? "preview-ok" : "preview-bad");
+    const node = document.querySelector(`#player .cell[data-coord="${coord(r, c)}"]`);
+    if (node) node.classList.add(ok ? "preview-ok" : "preview-bad");
   }
 }
 

@@ -4,11 +4,15 @@
   "private": true,
   "description": "Browser Battleship prototype vs an AI opponent",
   "scripts": {
-    "test": "node --test test/game.test.js",
+    "test": "node --test test/game.test.js test/ui.test.js",
+    "test:coverage": "node --test --experimental-test-coverage test/game.test.js test/ui.test.js",
+    "test:unit": "node --test test/game.test.js",
+    "test:dom": "node --test test/ui.test.js",
     "test:ui": "playwright test",
     "test:all": "npm test && npm run test:ui"
   },
   "devDependencies": {
-    "@playwright/test": "^1.49.1"
+    "@playwright/test": "^1.49.1",
+    "jsdom": "^26.1.0"
   }
 }
