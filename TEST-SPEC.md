@@ -182,8 +182,16 @@ uniform fire, hard-mode density behaviour, a fairness test asserting the density
 identical for two different hidden fleets with the same shot history, and a difficulty
 ordering test (measured: easy ~96, normal ~52, hard ~46 shots per board).
 
+- **`test/ui.test.js`** (`node --test` + jsdom): headless unit tests for `ui.js`, which had
+  no coverage outside the browser suite. It boots `index.html` in jsdom and drives the DOM
+  layer directly — grid and label rendering, placement/rejection logging, rotate (button and
+  `R` hotkey, including modified keypresses), random placement, undo, hover and drag previews,
+  firing, stats, both end-of-game paths, and the cancelled-timer regression. Run
+  `npm run test:coverage` for the line/branch report: `game.js` and `ui.js` are both at 100%
+  of lines.
+
 CI (`.github/workflows/test.yml`) runs both suites on every push to main and every PR.
 
-Current status: 17/17 logic tests and 29/29 DOM tests pass.
+Current status: 17/17 logic tests, 27/27 jsdom tests, and 29/29 Playwright DOM tests pass.
 
 Not yet automated: visual/CSS regression, and touch-based drag placement.
