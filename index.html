@@ -19,14 +19,16 @@
   .label { background:transparent; border:none; color:#8ab4dd; font-weight:600; }
   .board.target .cell:not(.label) { cursor:crosshair; }
   .board.target .cell:not(.label):hover { outline:2px solid #4dabf7; }
+  @property --radar-angle { syntax:"<angle>"; initial-value:0deg; inherits:false; }
   .board.target.battle::before {
     content:""; position:absolute; inset:0; z-index:0; pointer-events:none; border-radius:6px;
     background:
       repeating-radial-gradient(circle at 50% 50%, rgba(77,171,247,.16) 0 1px, transparent 1px 34px),
-      conic-gradient(from 0deg at 50% 50%, rgba(81,207,102,.28) 0deg, rgba(81,207,102,.06) 40deg, transparent 90deg 360deg);
+      conic-gradient(from var(--radar-angle) at 50% 50%, rgba(81,207,102,.34) 0deg, rgba(81,207,102,.08) 40deg, transparent 90deg 360deg);
     animation:radar-sweep 4s linear infinite;
   }
-  @keyframes radar-sweep { from { transform:rotate(0deg); } to { transform:rotate(360deg); } }
+  .board.target.battle .cell:not(.label):not(.shot) { background:rgba(14,42,71,.45); }
+  @keyframes radar-sweep { from { --radar-angle:0deg; } to { --radar-angle:360deg; } }
   @media (prefers-reduced-motion: reduce) { .board.target.battle::before { animation:none; } }
   .cell.ship { background:var(--ship); }
   .cell.hit { background:var(--hit); }
