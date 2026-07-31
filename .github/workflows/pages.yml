@@ -26,9 +26,7 @@ jobs:
         with:
           enablement: true
       - name: Package the static game
-        run: |
-          mkdir -p _site
-          cp index.html game.js ui.js _site/
+        run: ./scripts/build-site.sh _site
       - uses: actions/upload-pages-artifact@v3
         with:
           path: _site

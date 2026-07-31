@@ -96,14 +96,23 @@ function log(msg) {
   box.scrollTop = box.scrollHeight;
 }
 
+// The audio layer is a nicety, so the game stays playable even if sound.js is
+// missing entirely (a deploy that forgot to ship it, a blocked request).
+const sfx = typeof sound !== "undefined" ? sound : missingSound();
+
+function missingSound() {
+  console.warn("sound.js did not load; the game will be silent.");
+  return { play() {}, muted: true, available: false, setMuted: () => true };
+}
+
 // A refused action: same message as always, plus the buzz that goes with it.
 function rejected(msg) {
-  sound.play("invalid");
+  sfx.play("invalid");
   log(msg);
 }
 
 // Shot feedback shared by both sides: hit, sunk, and miss each have their own effect.
-const shotSound = (result) => sound.play(result === "miss" ? "miss" : result === "sunk" ? "sunk" : "hit");
+const shotSound = (result) => sfx.play(result === "miss" ? "miss" : result === "sunk" ? "sunk" : "hit");
 
 const isPlaced = (name) => state.player.ships.some((s) => s.name === name);
 const unplaced = () => FLEET.filter((spec) => !isPlaced(spec.name));
@@ -128,7 +137,7 @@ function placeShip(spec, r, c, horizontal) {
     reportError(`placing the ${spec.name}`, err);
     return false;
   }
-  sound.play("place");
+  sfx.play("place");
   log(`${spec.name} placed at ${coord(r, c)}.`);
   if (placementDone()) log("Fleet ready. Fire at will!");
   return true;
@@ -143,7 +152,7 @@ function randomPlacement() {
     render();
     return;
   }
-  sound.play("place");
+  sfx.play("place");
   log("Fleet placed randomly.");
   log("Fleet ready. Fire at will!");
   render();
@@ -359,7 +368,7 @@ function onDrop(r, c) {
 
 // "<lead> at C5 — HIT! You sank their Cruiser!", plus the matching sound.
 function announceShot(lead, r, c, res, sunkSuffix) {
-  sound.play("fire");
+  sfx.play("fire");
   shotSound(res.result);
   const outcome = res.result === "miss" ? "miss" : "HIT";
   const suffix = res.result === "sunk" ? sunkSuffix(res.ship.name) : "";
@@ -367,7 +376,7 @@ function announceShot(lead, r, c, res, sunkSuffix) {
 }
 
 function endGame(winner, summaryLead, effect) {
-  sound.play(effect);
+  sfx.play(effect);
   state.over = true;
   state.winner = winner;
   const { you, foe } = scoreboard();
@@ -442,9 +451,9 @@ el("difficulty").addEventListener("change", (e) => {
 });
 el("rotate").addEventListener("click", rotate);
 el("mute").addEventListener("click", () => {
-  sound.setMuted(!sound.muted);
+  sfx.setMuted(!sfx.muted);
   renderMuteButton();
-  log(sound.muted ? "Sound off." : "Sound on.");
+  log(sfx.muted ? "Sound off." : "Sound on.");
 });
 window.addEventListener("keydown", (e) => {
   if (e.ctrlKey || e.altKey || e.metaKey) return;
@@ -459,11 +468,11 @@ function rotate() {
 
 function renderMuteButton() {
   const button = el("mute");
-  button.textContent = sound.available
-    ? `Sound: ${sound.muted ? "off" : "on"}`
+  button.textContent = sfx.available
+    ? `Sound: ${sfx.muted ? "off" : "on"}`
     : "Sound: unavailable";
-  button.setAttribute("aria-pressed", String(sound.muted));
-  button.disabled = !sound.available;
+  button.setAttribute("aria-pressed", String(sfx.muted));
+  button.disabled = !sfx.available;
 }
 
 renderMuteButton();
