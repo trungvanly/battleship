@@ -140,10 +140,21 @@ results and the sinkings announced to it — never the hidden grid.
 - The log is an append-only, scrolling, chronological record of every placement and shot,
   using `A5`-style coordinates.
 
+### Sound
+
+- Effects are synthesised with the Web Audio API (`sound.js`); the page ships no audio
+  files and makes no network requests for them.
+- One effect per event: ship placed, rejected action, shot fired, miss, hit, ship sunk,
+  victory, defeat. Both sides' shots use the same effects.
+- A "Sound: on/off" header button mutes everything; the choice is remembered in
+  `localStorage`. Where Web Audio is unavailable the button reads "Sound: unavailable"
+  and is disabled; the game itself is unaffected.
+- Audio is best-effort: a failure to play never interrupts a turn.
+
 ## 10. Non-Goals (prototype)
 
 - No two-player / networked play, no accounts, no persistence across reloads.
-- No animations, sound, or mobile-specific layout.
+- No animations, background music, or mobile-specific layout.
 
 ## 11. Open Items / Next Steps
 

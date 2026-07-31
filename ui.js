@@ -88,6 +88,15 @@ function log(msg) {
   box.scrollTop = box.scrollHeight;
 }
 
+// A refused action: same message as always, plus the buzz that goes with it.
+function rejected(msg) {
+  sound.play("invalid");
+  log(msg);
+}
+
+// Shot feedback shared by both sides: hit, sunk, and miss each have their own effect.
+const shotSound = (result) => sound.play(result === "miss" ? "miss" : result === "sunk" ? "sunk" : "hit");
+
 const isPlaced = (name) => state.player.ships.some((s) => s.name === name);
 const unplaced = () => FLEET.filter((spec) => !isPlaced(spec.name));
 
@@ -103,14 +112,15 @@ const placementDone = () => unplaced().length === 0;
 
 function placeShip(spec, r, c, horizontal) {
   const cells = cellsFor(r, c, spec.size, horizontal);
-  if (!onBoard(cells)) { log(`Invalid placement — the ${spec.name} would hang off the board.`); return false; }
-  if (!canPlace(state.player, cells)) { log(`Invalid placement — the ${spec.name} would overlap another ship.`); return false; }
+  if (!onBoard(cells)) { rejected(`Invalid placement — the ${spec.name} would hang off the board.`); return false; }
+  if (!canPlace(state.player, cells)) { rejected(`Invalid placement — the ${spec.name} would overlap another ship.`); return false; }
   try {
     place(state.player, spec, cells);
   } catch (err) {
     reportError(`placing the ${spec.name}`, err);
     return false;
   }
+  sound.play("place");
   log(`${spec.name} placed at ${coord(r, c)}.`);
   if (placementDone()) log("Fleet ready. Fire at will!");
   return true;
@@ -125,15 +135,16 @@ function randomPlacement() {
     render();
     return;
   }
+  sound.play("place");
   log("Fleet placed randomly.");
   log("Fleet ready. Fire at will!");
   render();
 }
 
 function undoLastShip() {
-  if (!state.player.ships.length) { log("Nothing to undo — no ships placed yet."); return; }
+  if (!state.player.ships.length) { rejected("Nothing to undo — no ships placed yet."); return; }
   if (state.player.shots.flat().some(Boolean)) {
-    log("Ships cannot be moved once the shooting has started.");
+    rejected("Ships cannot be moved once the shooting has started.");
     return;
   }
   const ship = state.player.ships.pop();
@@ -342,13 +353,14 @@ function onDrop(r, c) {
   state.dragging = null;
   state.preview = null;
   const spec = FLEET.find((s) => s.name === name);
-  if (!spec) log(name ? `Unknown ship "${name}" — drop ignored.` : "Nothing was being dragged.");
-  else if (isPlaced(spec.name)) log(`The ${spec.name} is already on the board.`);
+  if (!spec) rejected(name ? `Unknown ship "${name}" — drop ignored.` : "Nothing was being dragged.");
+  else if (isPlaced(spec.name)) rejected(`The ${spec.name} is already on the board.`);
   else placeShip(spec, r, c, state.horizontal);
   render();
 }
 
-function endGame(winner, summaryLead) {
+function endGame(winner, summaryLead, effect) {
+  sound.play(effect);
   state.over = true;
   state.winner = winner;
   const you = accuracy(state.enemy);
@@ -368,9 +380,11 @@ function onFireClick(r, c) {
     reportError(`firing at ${coord(r, c)}`, err);
     return;
   }
-  if (!res) { log(`You already fired at ${coord(r, c)} — pick another cell.`); return; }
+  if (!res) { rejected(`You already fired at ${coord(r, c)} — pick another cell.`); return; }
+  sound.play("fire");
+  shotSound(res.result);
   log(`You fire at ${coord(r, c)} — ${res.result === "miss" ? "miss" : "HIT"}${res.result === "sunk" ? `! You sank their ${res.ship.name}!` : ""}`);
-  if (allSunk(state.enemy)) { endGame("You win!", "All enemy ships sunk."); return; }
+  if (allSunk(state.enemy)) { endGame("You win!", "All enemy ships sunk.", "win"); return; }
   state.turn = "enemy";
   render();
   const game = state;
@@ -392,15 +406,17 @@ function takeEnemyTurn() {
   state.timer = null;
   const target = aiChoose(state.ai, state.player, { difficulty: state.difficulty });
   if (!target) {
-    endGame("Draw — no cells left.", "The enemy has nowhere left to fire.");
+    endGame("Draw — no cells left.", "The enemy has nowhere left to fire.", "lose");
     return;
   }
   const [r, c] = target;
   const res = fire(state.player, r, c);
   if (!res) throw new Error(`the AI picked ${coord(r, c)}, which it had already fired at`);
+  sound.play("fire");
+  shotSound(res.result);
   log(`Enemy fires at ${coord(r, c)} — ${res.result === "miss" ? "miss" : "HIT"}${res.result === "sunk" ? `! Your ${res.ship.name} is sunk!` : ""}`);
   aiObserve(state.ai, r, c, res);
-  if (allSunk(state.player)) { endGame("Enemy wins!", "Your fleet is destroyed."); return; }
+  if (allSunk(state.player)) { endGame("Enemy wins!", "Your fleet is destroyed.", "lose"); return; }
   state.turn = "player";
   render();
 }
@@ -423,6 +439,11 @@ el("difficulty").addEventListener("change", (e) => {
   log(`Difficulty set to ${value}.`);
 });
 el("rotate").addEventListener("click", rotate);
+el("mute").addEventListener("click", () => {
+  sound.setMuted(!sound.muted);
+  renderMuteButton();
+  log(sound.muted ? "Sound off." : "Sound on.");
+});
 window.addEventListener("keydown", (e) => {
   if (e.ctrlKey || e.altKey || e.metaKey) return;
   if (e.key && e.key.toLowerCase() === "r") rotate();
@@ -434,4 +455,14 @@ function rotate() {
   render();
 }
 
+function renderMuteButton() {
+  const button = el("mute");
+  button.textContent = sound.available
+    ? `Sound: ${sound.muted ? "off" : "on"}`
+    : "Sound: unavailable";
+  button.setAttribute("aria-pressed", String(sound.muted));
+  button.disabled = !sound.available;
+}
+
+renderMuteButton();
 newGame();
