@@ -31,9 +31,30 @@ function newGame() {
     dragging: null,
   };
   randomFleet(state.enemy);
+  buildSkeleton();
   byId("log").innerHTML = "";
   log("Place your fleet: click or drag a ship onto your ocean grid.");
   render();
+}
+
+// The grids and fleet lists are structural: they are created on the first game and
+// then reused for the life of the page.
+function buildSkeleton() {
+  const player = byId("player");
+  if (gridCells.has(player)) return;
+  buildGrid(player, {
+    onClick: (r, c) => { if (!placementDone()) onPlaceClick(r, c); },
+    onEnter: (r, c) => { if (!placementDone()) showPreview(r, c); },
+    onDrop: (r, c) => { if (!placementDone()) onDrop(r, c); },
+    onLeave: clearPreview,
+  });
+  buildGrid(byId("enemy"), {
+    onClick: (r, c) => {
+      if (placementDone() && !state.over && state.turn === "player") onFireClick(r, c);
+    },
+  });
+  buildFleetList(byId("playerFleet"));
+  buildFleetList(byId("enemyFleet"));
 }
 
 function log(msg) {
@@ -93,61 +114,91 @@ function previewCells() {
   return cells.filter(([r, c]) => r < SIZE && c < SIZE).map(([r, c]) => [r, c, ok]);
 }
 
-function buildBoard(el, board, { reveal, onClick, placing }) {
-  el.innerHTML = "";
-  el.classList.toggle("placing", !!placing);
-  const preview = placing ? previewCells() : [];
+// Cell nodes are created once per grid and reused; renders only touch classNames,
+// so listeners survive and a hover is never interrupted by a rebuild.
+const gridCells = new WeakMap();
+const fleetItems = new WeakMap();
+
+function buildGrid(el, hooks) {
   el.appendChild(cellEl("cell label"));
   LETTERS.forEach((L) => el.appendChild(cellEl("cell label", L)));
+  const cells = [];
   for (let r = 0; r < SIZE; r++) {
     el.appendChild(cellEl("cell label", r + 1));
+    const row = [];
     for (let c = 0; c < SIZE; c++) {
       const d = cellEl("cell");
       d.dataset.coord = coord(r, c);
-      const ship = board.grid[r][c];
-      const shot = board.shots[r][c];
-      if (reveal && ship) d.classList.add("ship");
-      if (shot === "miss") d.classList.add("miss", "shot");
-      if (shot === "hit") d.classList.add(isSunk(ship) ? "sunk" : "hit", "shot");
-      const hint = preview.find(([pr, pc]) => sameCell([pr, pc], [r, c]));
-      if (hint) d.classList.add(hint[2] ? "preview-ok" : "preview-bad");
-      if (onClick) d.addEventListener("click", () => onClick(r, c));
-      if (placing) {
-        d.addEventListener("mouseenter", () => showPreview(r, c));
-        d.addEventListener("dragover", (e) => { e.preventDefault(); showPreview(r, c); });
-        d.addEventListener("drop", (e) => { e.preventDefault(); onDrop(r, c); });
+      d.addEventListener("click", () => hooks.onClick(r, c));
+      if (hooks.onEnter) {
+        d.addEventListener("mouseenter", () => hooks.onEnter(r, c));
+        d.addEventListener("dragover", (e) => { e.preventDefault(); hooks.onEnter(r, c); });
+        d.addEventListener("drop", (e) => { e.preventDefault(); hooks.onDrop(r, c); });
       }
       el.appendChild(d);
+      row.push(d);
+    }
+    cells.push(row);
+  }
+  if (hooks.onLeave) el.addEventListener("mouseleave", hooks.onLeave);
+  gridCells.set(el, cells);
+}
+
+function buildBoard(el, board, { reveal, placing }) {
+  el.classList.toggle("placing", !!placing);
+  const cells = gridCells.get(el);
+  for (let r = 0; r < SIZE; r++) {
+    for (let c = 0; c < SIZE; c++) {
+      const d = cells[r][c];
+      const ship = board.grid[r][c];
+      const shot = board.shots[r][c];
+      let cls = "cell";
+      if (reveal && ship) cls += " ship";
+      if (shot === "miss") cls += " miss shot";
+      if (shot === "hit") cls += isSunk(ship) ? " sunk shot" : " hit shot";
+      // applyPreview() owns the preview classes; keep whatever it last set.
+      if (d.classList.contains("preview-ok")) cls += " preview-ok";
+      else if (d.classList.contains("preview-bad")) cls += " preview-bad";
+      if (d.className !== cls) d.className = cls;
     }
   }
-  if (placing) el.addEventListener("mouseleave", clearPreview);
+}
+
+function buildFleetList(el) {
+  const items = new Map();
+  for (const spec of FLEET) {
+    const li = document.createElement("li");
+    li.dataset.ship = spec.name;
+    li.addEventListener("dragstart", () => { if (li.draggable) state.dragging = spec.name; });
+    li.addEventListener("dragend", () => { state.dragging = null; clearPreview(); });
+    el.appendChild(li);
+    items.set(spec.name, li);
+  }
+  fleetItems.set(el, items);
 }
 
 function fleetList(el, board, hideIntact, draggable) {
-  el.innerHTML = "";
+  const items = fleetItems.get(el);
   for (const spec of FLEET) {
     const ship = board.ships.find((s) => s.name === spec.name);
-    const li = document.createElement("li");
+    const li = items.get(spec.name);
     const sunk = isSunk(ship);
-    li.className = sunk ? "sunk" : "";
-    li.dataset.ship = spec.name;
+    const cls = sunk ? "sunk" : "";
+    if (li.className !== cls) li.className = cls;
     const detail = sunk ? "SUNK" : hideIntact ? "" : ship ? `${ship.hits}/${ship.size} hits` : "not placed";
-    li.textContent = `${spec.name} (${spec.size})${detail ? " — " + detail : ""}`;
-    if (draggable && !ship) {
-      li.draggable = true;
-      li.addEventListener("dragstart", () => { state.dragging = spec.name; });
-      li.addEventListener("dragend", () => { state.dragging = null; clearPreview(); });
-    }
-    el.appendChild(li);
+    const text = `${spec.name} (${spec.size})${detail ? " — " + detail : ""}`;
+    if (li.textContent !== text) li.textContent = text;
+    const canDrag = !!draggable && !ship;
+    if (li.draggable !== canDrag) li.draggable = canDrag;
   }
 }
 
 // Your shots land on the enemy board and vice versa.
 const scoreboard = () => ({ you: accuracy(state.enemy), foe: accuracy(state.player) });
 
-function statsTable() {
+function statsTable(playerShotsFired, enemyShotsFired) {
   const el = byId("stats");
-  if (!hasShots(state.player) && !hasShots(state.enemy)) {
+  if (!playerShotsFired && !enemyShotsFired) {
     el.innerHTML = "";
     return;
   }
@@ -163,21 +214,16 @@ function statsTable() {
 
 function render() {
   const placing = !placementDone();
-  buildBoard(byId("player"), state.player, {
-    reveal: true,
-    onClick: placing ? onPlaceClick : null,
-    placing,
-  });
-  buildBoard(byId("enemy"), state.enemy, {
-    reveal: false,
-    onClick: !placing && !state.over && state.turn === "player" ? onFireClick : null,
-  });
+  const playerShotsFired = hasShots(state.player);
+  const enemyShotsFired = hasShots(state.enemy);
+  buildBoard(byId("player"), state.player, { reveal: true, placing });
+  buildBoard(byId("enemy"), state.enemy, { reveal: false });
   fleetList(byId("playerFleet"), state.player, false, placing);
   fleetList(byId("enemyFleet"), state.enemy, true, false);
   byId("rotate").textContent = "Rotate: " + (state.horizontal ? "horizontal" : "vertical");
   byId("rotate").disabled = !placing;
   byId("random").disabled = !placing;
-  byId("undo").disabled = !state.player.ships.length || hasShots(state.player);
+  byId("undo").disabled = !state.player.ships.length || playerShotsFired;
   byId("difficulty").disabled = !placing;
   byId("status").textContent = state.over
     ? state.winner
@@ -186,7 +232,7 @@ function render() {
     : state.turn === "player"
     ? "Your turn — fire at the target grid"
     : "Enemy is firing...";
-  statsTable();
+  statsTable(playerShotsFired, enemyShotsFired);
   applyPreview();
 }
 
