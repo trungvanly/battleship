@@ -1,13 +1,43 @@
 // DOM layer: rendering, input handling, and turn sequencing. Rules live in game.js.
 
 // Tests can shorten the AI's thinking time with ?delay=0.
-const AI_DELAY_MS = Number(new URLSearchParams(location.search).get("delay") ?? 600);
+const DEFAULT_AI_DELAY_MS = 600;
+const AI_DELAY_MS = parseDelay(new URLSearchParams(location.search).get("delay"));
+
+function parseDelay(raw) {
+  if (raw === null) return DEFAULT_AI_DELAY_MS;
+  const ms = Number(raw);
+  if (!Number.isFinite(ms) || ms < 0) {
+    console.warn(`Ignoring invalid ?delay=${raw}; using ${DEFAULT_AI_DELAY_MS}ms.`);
+    return DEFAULT_AI_DELAY_MS;
+  }
+  return ms;
+}
 
 let state;
 
+// Every DOM lookup goes through here so a missing element is an immediate,
+// named failure instead of a downstream "cannot read property of null".
+function el(id) {
+  const node = document.getElementById(id);
+  if (!node) throw new Error(`Missing required element #${id}`);
+  return node;
+}
+
+// Surfaces an unexpected failure to the player instead of letting it die in a
+// callback, and leaves the game in a state they can act on.
+function reportError(context, err) {
+  console.error(`${context}:`, err);
+  try {
+    log(`Something went wrong (${context}): ${err && err.message ? err.message : err}. Start a new game.`);
+  } catch (logErr) {
+    console.error("Could not write to the log:", logErr);
+  }
+}
+
 function newGame() {
   if (state && state.timer !== null) clearTimeout(state.timer);
-  const difficulty = document.getElementById("difficulty").value;
+  const difficulty = el("difficulty").value;
   state = {
     player: emptyBoard(),
     enemy: emptyBoard(),
@@ -21,17 +51,17 @@ function newGame() {
     dragging: null,
   };
   randomFleet(state.enemy);
-  document.getElementById("log").innerHTML = "";
+  el("log").innerHTML = "";
   log("Place your fleet: click or drag a ship onto your ocean grid.");
   render();
 }
 
 function log(msg) {
-  const el = document.getElementById("log");
+  const box = el("log");
   const d = document.createElement("div");
   d.textContent = msg;
-  el.appendChild(d);
-  el.scrollTop = el.scrollHeight;
+  box.appendChild(d);
+  box.scrollTop = box.scrollHeight;
 }
 
 const isPlaced = (name) => state.player.ships.some((s) => s.name === name);
@@ -51,7 +81,12 @@ function placeShip(spec, r, c, horizontal) {
   const cells = cellsFor(r, c, spec.size, horizontal);
   if (!onBoard(cells)) { log(`Invalid placement — the ${spec.name} would hang off the board.`); return false; }
   if (!canPlace(state.player, cells)) { log(`Invalid placement — the ${spec.name} would overlap another ship.`); return false; }
-  place(state.player, spec, cells);
+  try {
+    place(state.player, spec, cells);
+  } catch (err) {
+    reportError(`placing the ${spec.name}`, err);
+    return false;
+  }
   log(`${spec.name} placed at ${coord(r, c)}.`);
   if (placementDone()) log("Fleet ready. Fire at will!");
   return true;
@@ -59,15 +94,12 @@ function placeShip(spec, r, c, horizontal) {
 
 function randomPlacement() {
   if (placementDone()) return;
-  for (const spec of unplaced()) {
-    let placed = false;
-    while (!placed) {
-      const horizontal = Math.random() < 0.5;
-      const r = Math.floor(Math.random() * SIZE);
-      const c = Math.floor(Math.random() * SIZE);
-      const cells = cellsFor(r, c, spec.size, horizontal);
-      if (canPlace(state.player, cells)) { place(state.player, spec, cells); placed = true; }
-    }
+  try {
+    for (const spec of unplaced()) randomPlace(state.player, spec);
+  } catch (err) {
+    reportError("placing the fleet randomly", err);
+    render();
+    return;
   }
   log("Fleet placed randomly.");
   log("Fleet ready. Fire at will!");
@@ -75,7 +107,11 @@ function randomPlacement() {
 }
 
 function undoLastShip() {
-  if (!state.player.ships.length || state.player.shots.flat().some(Boolean)) return;
+  if (!state.player.ships.length) { log("Nothing to undo — no ships placed yet."); return; }
+  if (state.player.shots.flat().some(Boolean)) {
+    log("Ships cannot be moved once the shooting has started.");
+    return;
+  }
   const ship = state.player.ships.pop();
   ship.cells.forEach(([r, c]) => (state.player.grid[r][c] = null));
   log(`${ship.name} removed.`);
@@ -92,24 +128,24 @@ function previewCells() {
   return cells.filter(([r, c]) => r < SIZE && c < SIZE).map(([r, c]) => [r, c, ok]);
 }
 
-function buildBoard(el, board, { reveal, onClick, placing }) {
-  el.innerHTML = "";
-  el.classList.toggle("placing", !!placing);
+function buildBoard(container, board, { reveal, onClick, placing }) {
+  container.innerHTML = "";
+  container.classList.toggle("placing", !!placing);
   const preview = placing ? previewCells() : [];
   const head = document.createElement("div");
   head.className = "cell label";
-  el.appendChild(head);
+  container.appendChild(head);
   LETTERS.forEach((L) => {
     const d = document.createElement("div");
     d.className = "cell label";
     d.textContent = L;
-    el.appendChild(d);
+    container.appendChild(d);
   });
   for (let r = 0; r < SIZE; r++) {
     const rowLabel = document.createElement("div");
     rowLabel.className = "cell label";
     rowLabel.textContent = r + 1;
-    el.appendChild(rowLabel);
+    container.appendChild(rowLabel);
     for (let c = 0; c < SIZE; c++) {
       const d = document.createElement("div");
       d.className = "cell";
@@ -129,14 +165,14 @@ function buildBoard(el, board, { reveal, onClick, placing }) {
         d.addEventListener("dragover", (e) => { e.preventDefault(); showPreview(r, c); });
         d.addEventListener("drop", (e) => { e.preventDefault(); onDrop(r, c); });
       }
-      el.appendChild(d);
+      container.appendChild(d);
     }
   }
-  if (placing) el.addEventListener("mouseleave", clearPreview);
+  if (placing) container.addEventListener("mouseleave", clearPreview);
 }
 
-function fleetList(el, board, hideIntact, draggable) {
-  el.innerHTML = "";
+function fleetList(container, board, hideIntact, draggable) {
+  container.innerHTML = "";
   for (const spec of FLEET) {
     const ship = board.ships.find((s) => s.name === spec.name);
     const li = document.createElement("li");
@@ -150,20 +186,20 @@ function fleetList(el, board, hideIntact, draggable) {
       li.addEventListener("dragstart", () => { state.dragging = spec.name; });
       li.addEventListener("dragend", () => { state.dragging = null; clearPreview(); });
     }
-    el.appendChild(li);
+    container.appendChild(li);
   }
 }
 
 function statsTable() {
-  const el = document.getElementById("stats");
+  const box = el("stats");
   if (!state.player.shots.flat().some(Boolean) && !state.enemy.shots.flat().some(Boolean)) {
-    el.innerHTML = "";
+    box.innerHTML = "";
     return;
   }
   const you = accuracy(state.enemy);   // your shots land on the enemy board
   const foe = accuracy(state.player);
   const sunkBy = (board) => board.ships.filter((s) => s.hits === s.size).length;
-  el.innerHTML = `
+  box.innerHTML = `
     <table>
       <tr><th></th><th>Shots</th><th>Hits</th><th>Accuracy</th><th>Sunk</th></tr>
       <tr><td>You</td><td>${you.shots}</td><td>${you.hits}</td><td>${you.pct}%</td><td>${sunkBy(state.enemy)}/5</td></tr>
@@ -174,25 +210,25 @@ function statsTable() {
 
 function render() {
   const placing = !placementDone();
-  buildBoard(document.getElementById("player"), state.player, {
+  buildBoard(el("player"), state.player, {
     reveal: true,
     onClick: placing ? onPlaceClick : null,
     placing,
   });
-  buildBoard(document.getElementById("enemy"), state.enemy, {
+  buildBoard(el("enemy"), state.enemy, {
     reveal: false,
     onClick: !placing && !state.over && state.turn === "player" ? onFireClick : null,
   });
-  fleetList(document.getElementById("playerFleet"), state.player, false, placing);
-  fleetList(document.getElementById("enemyFleet"), state.enemy, true, false);
-  document.getElementById("rotate").textContent =
+  fleetList(el("playerFleet"), state.player, false, placing);
+  fleetList(el("enemyFleet"), state.enemy, true, false);
+  el("rotate").textContent =
     "Rotate: " + (state.horizontal ? "horizontal" : "vertical");
-  document.getElementById("rotate").disabled = !placing;
-  document.getElementById("random").disabled = !placing;
-  document.getElementById("undo").disabled =
+  el("rotate").disabled = !placing;
+  el("random").disabled = !placing;
+  el("undo").disabled =
     !state.player.ships.length || state.player.shots.flat().some(Boolean);
-  document.getElementById("difficulty").disabled = !placing;
-  document.getElementById("status").textContent = state.over
+  el("difficulty").disabled = !placing;
+  el("status").textContent = state.over
     ? state.winner
     : placing
     ? `Placing ${placingSpec().name} (${placingSpec().size})`
@@ -243,7 +279,9 @@ function onDrop(r, c) {
   state.dragging = null;
   state.preview = null;
   const spec = FLEET.find((s) => s.name === name);
-  if (spec && !isPlaced(spec.name)) placeShip(spec, r, c, state.horizontal);
+  if (!spec) log(name ? `Unknown ship "${name}" — drop ignored.` : "Nothing was being dragged.");
+  else if (isPlaced(spec.name)) log(`The ${spec.name} is already on the board.`);
+  else placeShip(spec, r, c, state.horizontal);
   render();
 }
 
@@ -260,8 +298,14 @@ function endGame(winner, summaryLead) {
 
 function onFireClick(r, c) {
   if (state.over || state.turn !== "player") return;
-  const res = fire(state.enemy, r, c);
-  if (!res) return;
+  let res;
+  try {
+    res = fire(state.enemy, r, c);
+  } catch (err) {
+    reportError(`firing at ${coord(r, c)}`, err);
+    return;
+  }
+  if (!res) { log(`You already fired at ${coord(r, c)} — pick another cell.`); return; }
   log(`You fire at ${coord(r, c)} — ${res.result === "miss" ? "miss" : "HIT"}${res.result === "sunk" ? `! You sank their ${res.ship.name}!` : ""}`);
   if (allSunk(state.enemy)) { endGame("You win!", "All enemy ships sunk."); return; }
   state.turn = "enemy";
@@ -271,12 +315,26 @@ function onFireClick(r, c) {
 }
 
 function enemyTurn() {
+  try {
+    takeEnemyTurn();
+  } catch (err) {
+    // A crash inside the timer would otherwise leave the turn stuck on the enemy.
+    reportError("the enemy's turn", err);
+    state.turn = "player";
+    render();
+  }
+}
+
+function takeEnemyTurn() {
   state.timer = null;
   const target = aiChoose(state.ai, state.player, { difficulty: state.difficulty });
-  if (!target) return;
+  if (!target) {
+    endGame("Draw — no cells left.", "The enemy has nowhere left to fire.");
+    return;
+  }
   const [r, c] = target;
   const res = fire(state.player, r, c);
-  if (!res) return;
+  if (!res) throw new Error(`the AI picked ${coord(r, c)}, which it had already fired at`);
   log(`Enemy fires at ${coord(r, c)} — ${res.result === "miss" ? "miss" : "HIT"}${res.result === "sunk" ? `! Your ${res.ship.name} is sunk!` : ""}`);
   aiObserve(state.ai, r, c, res);
   if (allSunk(state.player)) { endGame("Enemy wins!", "Your fleet is destroyed."); return; }
@@ -287,15 +345,21 @@ function enemyTurn() {
 // Test hook: read-only access to the live game state.
 window.__battleship = { get state() { return state; }, newGame, render, onPlaceClick, onFireClick };
 
-document.getElementById("new").addEventListener("click", newGame);
-document.getElementById("random").addEventListener("click", randomPlacement);
-document.getElementById("undo").addEventListener("click", undoLastShip);
-document.getElementById("difficulty").addEventListener("change", (e) => {
-  state.difficulty = e.target.value;
-  state.ai.difficulty = e.target.value;
-  log(`Difficulty set to ${e.target.value}.`);
+el("new").addEventListener("click", newGame);
+el("random").addEventListener("click", randomPlacement);
+el("undo").addEventListener("click", undoLastShip);
+el("difficulty").addEventListener("change", (e) => {
+  const value = e.target.value;
+  if (!DIFFICULTIES.includes(value)) {
+    reportError("changing difficulty", new RangeError(`unknown difficulty "${value}"`));
+    e.target.value = state.difficulty;
+    return;
+  }
+  state.difficulty = value;
+  state.ai.difficulty = value;
+  log(`Difficulty set to ${value}.`);
 });
-document.getElementById("rotate").addEventListener("click", rotate);
+el("rotate").addEventListener("click", rotate);
 window.addEventListener("keydown", (e) => {
   if (e.ctrlKey || e.altKey || e.metaKey) return;
   if (e.key && e.key.toLowerCase() === "r") rotate();

@@ -124,6 +124,17 @@ test.describe("firing", () => {
     await cell(page, "enemy", "J10").click();
     const shotsAfter = await state(page, () => __battleship.state.enemy.shots.flat().filter(Boolean).length);
     expect(shotsAfter).toBe(shotsBefore);
+    expect(await logText(page)).toContain("You already fired at J10");
+  });
+
+  test("a failure during the enemy turn is reported and hands the turn back", async ({ page }) => {
+    await state(page, () => {
+      __battleship.state.difficulty = "nightmare";
+      __battleship.state.turn = "player";
+    });
+    await cell(page, "enemy", "J10").click();
+    await expect(page.locator("#log")).toContainText("Something went wrong (the enemy's turn)");
+    expect(await state(page, () => __battleship.state.turn)).toBe("player");
   });
 
   test("F5/F6: turns stay alternating under rapid clicking", async ({ page }) => {
