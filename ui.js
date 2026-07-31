@@ -102,7 +102,7 @@ const sfx = typeof sound !== "undefined" ? sound : missingSound();
 
 function missingSound() {
   console.warn("sound.js did not load; the game will be silent.");
-  return { play() {}, muted: true, available: false, setMuted: () => true };
+  return { play() {}, startMusic() {}, stopMusic() {}, muted: true, available: false, setMuted: () => true };
 }
 
 // A refused action: same message as always, plus the buzz that goes with it.
@@ -301,6 +301,9 @@ function render() {
   buildBoard(el("player"), state.player, { reveal: true, placing });
   buildBoard(el("enemy"), state.enemy, { reveal: false });
   el("enemy").classList.toggle("battle", !placing);
+  // The theme runs for as long as the battle does.
+  if (!placing && !state.over) sfx.startMusic();
+  else sfx.stopMusic();
   fleetList(el("playerFleet"), state.player, false, placing);
   fleetList(el("enemyFleet"), state.enemy, true, false);
   el("rotate").textContent =

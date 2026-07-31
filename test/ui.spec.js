@@ -378,4 +378,22 @@ test.describe("sound", () => {
     expect(await logText(page)).toContain("You fire at A1");
     expect(failures).toEqual([]);
   });
+
+  test("A4: the battle theme starts when firing unlocks and stops on a new game", async ({ page }) => {
+    await page.goto(fast);
+    expect(await state(page, () => sfx.musicPlaying)).toBe(false);
+    await placeFleet(page);
+    expect(await state(page, () => sfx.musicPlaying)).toBe(true);
+    await page.locator("#new").click();
+    expect(await state(page, () => sfx.musicPlaying)).toBe(false);
+  });
+
+  test("A5: muting stops the theme and unmuting brings it back", async ({ page }) => {
+    await page.goto(fast);
+    await placeFleet(page);
+    await page.locator("#mute").click();
+    expect(await state(page, () => sfx.musicPlaying)).toBe(false);
+    await page.locator("#mute").click();
+    expect(await state(page, () => sfx.musicPlaying)).toBe(true);
+  });
 });
