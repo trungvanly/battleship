@@ -21,7 +21,8 @@
   .board.target .cell:not(.label):hover { outline:2px solid #4dabf7; }
   @property --radar-angle { syntax:"<angle>"; initial-value:0deg; inherits:false; }
   .board.target.battle::before {
-    content:""; position:absolute; inset:0; z-index:0; pointer-events:none; border-radius:6px;
+    /* Inset past the label row/column (34px cell + 2px gap) so the sweep covers, and centres on, the 10x10 play area. */
+    content:""; position:absolute; inset:36px 0 0 36px; z-index:0; pointer-events:none; border-radius:6px;
     background:
       repeating-radial-gradient(circle at 50% 50%, rgba(77,171,247,.16) 0 1px, transparent 1px 34px),
       conic-gradient(from var(--radar-angle) at 50% 50%, rgba(81,207,102,.34) 0deg, rgba(81,207,102,.08) 40deg, transparent 90deg 360deg);
