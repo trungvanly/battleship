@@ -5,9 +5,19 @@ const AI_DELAY_MS = Number(new URLSearchParams(location.search).get("delay") ?? 
 
 let state;
 
+const byId = (id) => document.getElementById(id);
+
+// <div class="cell ...">text</div>, the unit every grid is built from.
+function cellEl(classes, text) {
+  const d = document.createElement("div");
+  d.className = classes;
+  if (text !== undefined) d.textContent = text;
+  return d;
+}
+
 function newGame() {
   if (state && state.timer !== null) clearTimeout(state.timer);
-  const difficulty = document.getElementById("difficulty").value;
+  const difficulty = byId("difficulty").value;
   state = {
     player: emptyBoard(),
     enemy: emptyBoard(),
@@ -21,13 +31,13 @@ function newGame() {
     dragging: null,
   };
   randomFleet(state.enemy);
-  document.getElementById("log").innerHTML = "";
+  byId("log").innerHTML = "";
   log("Place your fleet: click or drag a ship onto your ocean grid.");
   render();
 }
 
 function log(msg) {
-  const el = document.getElementById("log");
+  const el = byId("log");
   const d = document.createElement("div");
   d.textContent = msg;
   el.appendChild(d);
@@ -59,23 +69,14 @@ function placeShip(spec, r, c, horizontal) {
 
 function randomPlacement() {
   if (placementDone()) return;
-  for (const spec of unplaced()) {
-    let placed = false;
-    while (!placed) {
-      const horizontal = Math.random() < 0.5;
-      const r = Math.floor(Math.random() * SIZE);
-      const c = Math.floor(Math.random() * SIZE);
-      const cells = cellsFor(r, c, spec.size, horizontal);
-      if (canPlace(state.player, cells)) { place(state.player, spec, cells); placed = true; }
-    }
-  }
+  placeRandomly(state.player, unplaced());
   log("Fleet placed randomly.");
   log("Fleet ready. Fire at will!");
   render();
 }
 
 function undoLastShip() {
-  if (!state.player.ships.length || state.player.shots.flat().some(Boolean)) return;
+  if (!state.player.ships.length || hasShots(state.player)) return;
   const ship = state.player.ships.pop();
   ship.cells.forEach(([r, c]) => (state.player.grid[r][c] = null));
   log(`${ship.name} removed.`);
@@ -96,32 +97,19 @@ function buildBoard(el, board, { reveal, onClick, placing }) {
   el.innerHTML = "";
   el.classList.toggle("placing", !!placing);
   const preview = placing ? previewCells() : [];
-  const head = document.createElement("div");
-  head.className = "cell label";
-  el.appendChild(head);
-  LETTERS.forEach((L) => {
-    const d = document.createElement("div");
-    d.className = "cell label";
-    d.textContent = L;
-    el.appendChild(d);
-  });
+  el.appendChild(cellEl("cell label"));
+  LETTERS.forEach((L) => el.appendChild(cellEl("cell label", L)));
   for (let r = 0; r < SIZE; r++) {
-    const rowLabel = document.createElement("div");
-    rowLabel.className = "cell label";
-    rowLabel.textContent = r + 1;
-    el.appendChild(rowLabel);
+    el.appendChild(cellEl("cell label", r + 1));
     for (let c = 0; c < SIZE; c++) {
-      const d = document.createElement("div");
-      d.className = "cell";
+      const d = cellEl("cell");
       d.dataset.coord = coord(r, c);
       const ship = board.grid[r][c];
       const shot = board.shots[r][c];
       if (reveal && ship) d.classList.add("ship");
       if (shot === "miss") d.classList.add("miss", "shot");
-      if (shot === "hit") {
-        d.classList.add(ship && ship.hits === ship.size ? "sunk" : "hit", "shot");
-      }
-      const hint = preview.find(([pr, pc]) => pr === r && pc === c);
+      if (shot === "hit") d.classList.add(isSunk(ship) ? "sunk" : "hit", "shot");
+      const hint = preview.find(([pr, pc]) => sameCell([pr, pc], [r, c]));
       if (hint) d.classList.add(hint[2] ? "preview-ok" : "preview-bad");
       if (onClick) d.addEventListener("click", () => onClick(r, c));
       if (placing) {
@@ -140,7 +128,7 @@ function fleetList(el, board, hideIntact, draggable) {
   for (const spec of FLEET) {
     const ship = board.ships.find((s) => s.name === spec.name);
     const li = document.createElement("li");
-    const sunk = ship && ship.hits === ship.size;
+    const sunk = isSunk(ship);
     li.className = sunk ? "sunk" : "";
     li.dataset.ship = spec.name;
     const detail = sunk ? "SUNK" : hideIntact ? "" : ship ? `${ship.hits}/${ship.size} hits` : "not placed";
@@ -154,45 +142,44 @@ function fleetList(el, board, hideIntact, draggable) {
   }
 }
 
+// Your shots land on the enemy board and vice versa.
+const scoreboard = () => ({ you: accuracy(state.enemy), foe: accuracy(state.player) });
+
 function statsTable() {
-  const el = document.getElementById("stats");
-  if (!state.player.shots.flat().some(Boolean) && !state.enemy.shots.flat().some(Boolean)) {
+  const el = byId("stats");
+  if (!hasShots(state.player) && !hasShots(state.enemy)) {
     el.innerHTML = "";
     return;
   }
-  const you = accuracy(state.enemy);   // your shots land on the enemy board
-  const foe = accuracy(state.player);
-  const sunkBy = (board) => board.ships.filter((s) => s.hits === s.size).length;
+  const { you, foe } = scoreboard();
   el.innerHTML = `
     <table>
       <tr><th></th><th>Shots</th><th>Hits</th><th>Accuracy</th><th>Sunk</th></tr>
-      <tr><td>You</td><td>${you.shots}</td><td>${you.hits}</td><td>${you.pct}%</td><td>${sunkBy(state.enemy)}/5</td></tr>
-      <tr><td>Enemy</td><td>${foe.shots}</td><td>${foe.hits}</td><td>${foe.pct}%</td><td>${sunkBy(state.player)}/5</td></tr>
+      <tr><td>You</td><td>${you.shots}</td><td>${you.hits}</td><td>${you.pct}%</td><td>${sunkCount(state.enemy)}/5</td></tr>
+      <tr><td>Enemy</td><td>${foe.shots}</td><td>${foe.hits}</td><td>${foe.pct}%</td><td>${sunkCount(state.player)}/5</td></tr>
     </table>
     ${state.over ? `<div class="summary">${state.summary}</div>` : ""}`;
 }
 
 function render() {
   const placing = !placementDone();
-  buildBoard(document.getElementById("player"), state.player, {
+  buildBoard(byId("player"), state.player, {
     reveal: true,
     onClick: placing ? onPlaceClick : null,
     placing,
   });
-  buildBoard(document.getElementById("enemy"), state.enemy, {
+  buildBoard(byId("enemy"), state.enemy, {
     reveal: false,
     onClick: !placing && !state.over && state.turn === "player" ? onFireClick : null,
   });
-  fleetList(document.getElementById("playerFleet"), state.player, false, placing);
-  fleetList(document.getElementById("enemyFleet"), state.enemy, true, false);
-  document.getElementById("rotate").textContent =
-    "Rotate: " + (state.horizontal ? "horizontal" : "vertical");
-  document.getElementById("rotate").disabled = !placing;
-  document.getElementById("random").disabled = !placing;
-  document.getElementById("undo").disabled =
-    !state.player.ships.length || state.player.shots.flat().some(Boolean);
-  document.getElementById("difficulty").disabled = !placing;
-  document.getElementById("status").textContent = state.over
+  fleetList(byId("playerFleet"), state.player, false, placing);
+  fleetList(byId("enemyFleet"), state.enemy, true, false);
+  byId("rotate").textContent = "Rotate: " + (state.horizontal ? "horizontal" : "vertical");
+  byId("rotate").disabled = !placing;
+  byId("random").disabled = !placing;
+  byId("undo").disabled = !state.player.ships.length || hasShots(state.player);
+  byId("difficulty").disabled = !placing;
+  byId("status").textContent = state.over
     ? state.winner
     : placing
     ? `Placing ${placingSpec().name} (${placingSpec().size})`
@@ -247,11 +234,17 @@ function onDrop(r, c) {
   render();
 }
 
+// "<lead> at C5 — HIT! You sank their Cruiser!"
+function logShot(lead, r, c, res, sunkSuffix) {
+  const outcome = res.result === "miss" ? "miss" : "HIT";
+  const suffix = res.result === "sunk" ? sunkSuffix(res.ship.name) : "";
+  log(`${lead} at ${coord(r, c)} — ${outcome}${suffix}`);
+}
+
 function endGame(winner, summaryLead) {
   state.over = true;
   state.winner = winner;
-  const you = accuracy(state.enemy);
-  const foe = accuracy(state.player);
+  const { you, foe } = scoreboard();
   state.summary = `${summaryLead} You: ${you.hits}/${you.shots} hits (${you.pct}%). ` +
     `Enemy: ${foe.hits}/${foe.shots} hits (${foe.pct}%). Difficulty: ${state.difficulty}.`;
   log(state.summary);
@@ -262,7 +255,7 @@ function onFireClick(r, c) {
   if (state.over || state.turn !== "player") return;
   const res = fire(state.enemy, r, c);
   if (!res) return;
-  log(`You fire at ${coord(r, c)} — ${res.result === "miss" ? "miss" : "HIT"}${res.result === "sunk" ? `! You sank their ${res.ship.name}!` : ""}`);
+  logShot("You fire", r, c, res, (name) => `! You sank their ${name}!`);
   if (allSunk(state.enemy)) { endGame("You win!", "All enemy ships sunk."); return; }
   state.turn = "enemy";
   render();
@@ -277,7 +270,7 @@ function enemyTurn() {
   const [r, c] = target;
   const res = fire(state.player, r, c);
   if (!res) return;
-  log(`Enemy fires at ${coord(r, c)} — ${res.result === "miss" ? "miss" : "HIT"}${res.result === "sunk" ? `! Your ${res.ship.name} is sunk!` : ""}`);
+  logShot("Enemy fires", r, c, res, (name) => `! Your ${name} is sunk!`);
   aiObserve(state.ai, r, c, res);
   if (allSunk(state.player)) { endGame("Enemy wins!", "Your fleet is destroyed."); return; }
   state.turn = "player";
@@ -287,15 +280,15 @@ function enemyTurn() {
 // Test hook: read-only access to the live game state.
 window.__battleship = { get state() { return state; }, newGame, render, onPlaceClick, onFireClick };
 
-document.getElementById("new").addEventListener("click", newGame);
-document.getElementById("random").addEventListener("click", randomPlacement);
-document.getElementById("undo").addEventListener("click", undoLastShip);
-document.getElementById("difficulty").addEventListener("change", (e) => {
+byId("new").addEventListener("click", newGame);
+byId("random").addEventListener("click", randomPlacement);
+byId("undo").addEventListener("click", undoLastShip);
+byId("difficulty").addEventListener("change", (e) => {
   state.difficulty = e.target.value;
   state.ai.difficulty = e.target.value;
   log(`Difficulty set to ${e.target.value}.`);
 });
-document.getElementById("rotate").addEventListener("click", rotate);
+byId("rotate").addEventListener("click", rotate);
 window.addEventListener("keydown", (e) => {
   if (e.ctrlKey || e.altKey || e.metaKey) return;
   if (e.key && e.key.toLowerCase() === "r") rotate();
