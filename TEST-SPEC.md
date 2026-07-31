@@ -102,6 +102,8 @@ Each case is `id — action → expected`.
 |---|---|---|
 | A1 | Click the sound button | Label and `aria-pressed` toggle, `sound.muted` follows, log records it |
 | A2 | Place the fleet and fire a shot | A `place` effect per ship, then `fire` plus a hit/miss/sunk effect |
+| A4 | Place the fleet, then click New game | The battle theme starts once firing unlocks and stops again on the new game |
+| A5 | Mute, then unmute, mid-battle | The theme stops and resumes with the mute setting |
 
 ## 4. Bug reproductions
 

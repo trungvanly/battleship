@@ -146,7 +146,10 @@ results and the sinkings announced to it — never the hidden grid.
   files and makes no network requests for them.
 - One effect per event: ship placed, rejected action, shot fired, miss, hit, ship sunk,
   victory, defeat. Both sides' shots use the same effects.
-- A "Sound: on/off" header button mutes everything; the choice is remembered in
+- A looping battle theme, "Tides of War", is synthesised the same way and plays for as
+  long as the battle lasts: it starts when placement finishes and stops on game over or
+  a new game.
+- A "Sound: on/off" header button mutes everything, music included; the choice is remembered in
   `localStorage`. Where Web Audio is unavailable the button reads "Sound: unavailable"
   and is disabled; the game itself is unaffected.
 - Audio is best-effort: a failure to play never interrupts a turn.
@@ -155,7 +158,7 @@ results and the sinkings announced to it — never the hidden grid.
 
 - No two-player / networked play, no accounts, no persistence across reloads.
 - No gameplay animations (beyond the decorative radar-sweep backdrop on the
-  target grid during the firing phase), background music, or mobile-specific layout.
+  target grid during the firing phase) or mobile-specific layout.
 
 ## 11. Open Items / Next Steps
 

@@ -34,30 +34,31 @@ const sound = (() => {
     return ctx;
   }
 
-  function envelope(ac, gain, start, duration) {
+  function envelope(ac, gain, start, duration, attack = 0.01) {
     const g = ac.createGain();
     g.gain.setValueAtTime(0.0001, start);
-    g.gain.exponentialRampToValueAtTime(gain, start + 0.01);
+    g.gain.exponentialRampToValueAtTime(gain, start + Math.min(attack, duration / 2));
     g.gain.exponentialRampToValueAtTime(0.0001, start + duration);
     return g;
   }
 
   // A single pitched note, optionally sweeping from `freq` to `to`.
-  function tone(ac, { freq, to, type = "sine", gain = 0.2, duration = 0.2, delay = 0 }) {
-    const start = ac.currentTime + delay;
+  // `at` schedules on the context clock; `delay` is relative to now.
+  function tone(ac, { freq, to, type = "sine", gain = 0.2, duration = 0.2, delay = 0, attack, at, out }) {
+    const start = at === undefined ? ac.currentTime + delay : at;
     const osc = ac.createOscillator();
     osc.type = type;
     osc.frequency.setValueAtTime(freq, start);
     if (to && to !== freq) osc.frequency.exponentialRampToValueAtTime(to, start + duration);
-    const g = envelope(ac, gain, start, duration);
-    osc.connect(g).connect(ac.destination);
+    const g = envelope(ac, gain, start, duration, attack);
+    osc.connect(g).connect(out || ac.destination);
     osc.start(start);
     osc.stop(start + duration + 0.02);
   }
 
   // Filtered white noise: splashes and explosions.
-  function noise(ac, { duration = 0.3, gain = 0.2, filter = "lowpass", freq = 1000, delay = 0 }) {
-    const start = ac.currentTime + delay;
+  function noise(ac, { duration = 0.3, gain = 0.2, filter = "lowpass", freq = 1000, delay = 0, attack, at, out }) {
+    const start = at === undefined ? ac.currentTime + delay : at;
     const frames = Math.max(1, Math.floor(ac.sampleRate * duration));
     const buffer = ac.createBuffer(1, frames, ac.sampleRate);
     const data = buffer.getChannelData(0);
@@ -67,8 +68,8 @@ const sound = (() => {
     const bp = ac.createBiquadFilter();
     bp.type = filter;
     bp.frequency.setValueAtTime(freq, start);
-    const g = envelope(ac, gain, start, duration);
-    src.connect(bp).connect(g).connect(ac.destination);
+    const g = envelope(ac, gain, start, duration, attack);
+    src.connect(bp).connect(g).connect(out || ac.destination);
     src.start(start);
     src.stop(start + duration);
   }
@@ -96,6 +97,83 @@ const sound = (() => {
       tone(ac, { freq, type: "triangle", gain: 0.2, duration: 0.35, delay: i * 0.18 })),
   };
 
+  // --- "Tides of War": the looping battle theme. ---
+  // Also synthesised, for the same reason the effects are: no asset files, no
+  // network requests. Bars are scheduled a couple ahead on the audio clock so
+  // the loop stays seamless even when the main thread is busy.
+  const BEAT = 60 / 72;
+  const BAR = BEAT * 4;
+  // D minor - Bb - F - C, one bar each: a low drone plus a rising arpeggio.
+  const PROGRESSION = [
+    { bass: 73.42, notes: [293.66, 349.23, 440.00] },
+    { bass: 58.27, notes: [233.08, 293.66, 349.23] },
+    { bass: 87.31, notes: [261.63, 349.23, 440.00] },
+    { bass: 65.41, notes: [261.63, 329.63, 392.00] },
+  ];
+
+  let wantMusic = false;
+  let music = null; // { out, timer, bar, nextBar }
+
+  function scheduleBar(ac, index, start) {
+    const chord = PROGRESSION[index % PROGRESSION.length];
+    const out = music.out;
+    tone(ac, { freq: chord.bass, type: "sine", gain: 0.5, duration: BAR, attack: 0.5, at: start, out });
+    tone(ac, { freq: chord.bass * 2, type: "triangle", gain: 0.16, duration: BAR, attack: 0.8, at: start, out });
+    chord.notes.forEach((freq, i) =>
+      tone(ac, { freq, type: "triangle", gain: 0.1, duration: BEAT * 1.5, attack: 0.12, at: start + (i + 1) * BEAT, out }));
+    // The swell of the sea under it all.
+    noise(ac, { duration: BAR, gain: 0.14, filter: "lowpass", freq: 420, attack: BAR / 2, at: start, out });
+  }
+
+  function pump() {
+    if (!music) return;
+    const ac = audio();
+    if (!ac) return;
+    try {
+      // A throttled timer (hidden tab) can leave the cursor in the past; pick the
+      // loop back up from now rather than dumping every missed bar out at once.
+      if (music.nextBar < ac.currentTime) music.nextBar = ac.currentTime + 0.05;
+      while (music.nextBar < ac.currentTime + BAR * 2) {
+        scheduleBar(ac, music.bar++, music.nextBar);
+        music.nextBar += BAR;
+      }
+    } catch (err) {
+      console.warn("Could not play the battle music:", err);
+      endMusic();
+      return;
+    }
+    music.timer = setTimeout(pump, BAR * 1000);
+  }
+
+  function beginMusic() {
+    if (music || muted) return;
+    const ac = audio();
+    if (!ac) return;
+    const out = ac.createGain();
+    out.gain.setValueAtTime(0.0001, ac.currentTime);
+    out.gain.exponentialRampToValueAtTime(0.35, ac.currentTime + 2);
+    out.connect(ac.destination);
+    music = { out, timer: null, bar: 0, nextBar: ac.currentTime + 0.1 };
+    pump();
+  }
+
+  // Fades out; notes already scheduled on the bus go quiet with it.
+  function endMusic() {
+    if (!music) return;
+    const { out, timer } = music;
+    music = null;
+    clearTimeout(timer);
+    try {
+      const now = ctx.currentTime;
+      out.gain.cancelScheduledValues(now);
+      out.gain.setValueAtTime(Math.max(out.gain.value, 0.0001), now);
+      out.gain.exponentialRampToValueAtTime(0.0001, now + 1);
+      setTimeout(() => out.disconnect(), 1500);
+    } catch (err) {
+      out.disconnect();
+    }
+  }
+
   function play(name) {
     if (muted) return;
     const effect = EFFECTS[name];
@@ -115,11 +193,23 @@ const sound = (() => {
 
   return {
     play,
+    // Idempotent: the battle asks for the theme on every render.
+    startMusic() {
+      wantMusic = true;
+      beginMusic();
+    },
+    stopMusic() {
+      wantMusic = false;
+      endMusic();
+    },
+    get musicPlaying() { return !!music; },
     get muted() { return muted; },
     get available() { return !!AudioCtor; },
     setMuted(value) {
       muted = !!value;
       persistMuted();
+      if (muted) endMusic();
+      else if (wantMusic) beginMusic();
       return muted;
     },
     toggle() { return this.setMuted(!muted); },
