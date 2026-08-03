@@ -7,6 +7,7 @@ const assert = require("node:assert/strict");
 const path = require("path");
 const fs = require("fs");
 const { JSDOM } = require("jsdom");
+const g = require("../game.js");
 
 const ROOT = path.join(__dirname, "..");
 const HTML = fs.readFileSync(path.join(ROOT, "index.html"), "utf8");
@@ -370,6 +371,16 @@ test("the AI sinking the player's fleet ends the game", async () => {
 test("the difficulty select drives the AI and locks once firing starts", async () => {
   const win = await loadGame();
   const select = win.document.getElementById("difficulty");
+  assert.deepEqual(
+    [...select.options].map((o) => o.value),
+    g.DIFFICULTIES,
+    "the select offers exactly the supported difficulties"
+  );
+  select.value = "devin";
+  select.dispatchEvent(new win.Event("change"));
+  assert.equal(win.__battleship.state.difficulty, "devin");
+  assert.equal(win.__battleship.state.ai.difficulty, "devin");
+  assert.match(logText(win), /Difficulty set to devin\./);
   select.value = "hard";
   select.dispatchEvent(new win.Event("change"));
   assert.equal(win.__battleship.state.difficulty, "hard");

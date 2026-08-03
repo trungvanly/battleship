@@ -100,6 +100,14 @@ Difficulty is chosen before placement finishes and is fixed for the game.
 | Easy | Uniform random fire, no follow-up | ~96 |
 | Normal | Parity hunt + adjacency targeting (below) | ~52 |
 | Hard | Probability density over every legal remaining placement | ~46 |
+| Devin | Parity-masked probability density + predictive line targeting | ~46 |
+
+**Devin mode** combines the other two. While a damaged ship is unresolved it drains the
+target queue, so two collinear hits are finished predictively from the line's two ends. In
+hunt mode it builds the same density map as Hard but scores only the parity cells
+(`(row + col)` even), firing at the densest of them; that keeps every ship of length ≥ 2
+reachable while spending shots where placements are most concentrated. If no parity cell is
+left it falls back to the densest open cell, then to a random one.
 
 **Hard** rebuilds, before each shot, a map of how many legal placements of the ships still
 afloat could cover each un-fired cell, weighting placements that would explain an

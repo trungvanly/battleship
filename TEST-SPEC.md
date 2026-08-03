@@ -183,13 +183,15 @@ Coverage was extended alongside the SPEC.md open items:
 | S3–S4 | Undo removes the last ship; disabled with an empty board and after the first shot |
 | S5 | Hover preview is green when legal and red when it would overhang or overlap |
 | S6–S7 | Dragging a ship from the fleet list places it; placed ships stop being draggable |
-| D1–D2 | The difficulty selector drives the AI and locks at first fire; New game keeps it |
+| D1–D2 | The difficulty selector (easy/normal/hard/devin) drives the AI and locks at first fire; New game keeps it |
 | D3–D4 | Stats appear with the first shot and track accuracy; winning prints a summary |
 
 Logic side, additionally: `accuracy`, the AI's sunk-cell/remaining-fleet memory, easy-mode
-uniform fire, hard-mode density behaviour, a fairness test asserting the density map is
-identical for two different hidden fleets with the same shot history, and a difficulty
-ordering test (measured: easy ~96, normal ~52, hard ~46 shots per board).
+uniform fire, hard-mode density behaviour, devin-mode parity-masked hunting (parity-only
+hunt shots at the densest parity cell, target-queue drain before hunting, and the
+no-parity-left fallback), a fairness test asserting the density map is identical for two
+different hidden fleets with the same shot history, and a difficulty ordering test
+(measured: easy ~96, normal ~52, hard ~46, devin ~46 shots per board).
 
 - **`test/ui.test.js`** (`node --test` + jsdom): headless unit tests for `ui.js`, which had
   no coverage outside the browser suite. It boots `index.html` in jsdom and drives the DOM

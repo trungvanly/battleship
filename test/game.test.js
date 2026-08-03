@@ -215,8 +215,8 @@ test("A5: 2000 simulated games terminate, and the AI beats random play", () => {
   assert.ok(avg > 30, `suspiciously low average (${avg.toFixed(1)}) — is the AI cheating?`);
 });
 
-test("difficulty ordering: hard beats normal beats easy", () => {
-  assert.deepEqual(g.DIFFICULTIES, ["easy", "normal", "hard"]);
+test("difficulty ordering: devin and hard beat normal beats easy", () => {
+  assert.deepEqual(g.DIFFICULTIES, ["easy", "normal", "hard", "devin"]);
   const runs = 120;
   const average = (difficulty) => {
     let total = 0;
@@ -226,7 +226,53 @@ test("difficulty ordering: hard beats normal beats easy", () => {
   const easy = average("easy");
   const normal = average("normal");
   const hard = average("hard");
-  console.log(`    avg shots — easy ${easy.toFixed(1)}, normal ${normal.toFixed(1)}, hard ${hard.toFixed(1)}`);
+  const devin = average("devin");
+  console.log(`    avg shots — easy ${easy.toFixed(1)}, normal ${normal.toFixed(1)}, hard ${hard.toFixed(1)}, devin ${devin.toFixed(1)}`);
   assert.ok(hard < normal, `hard (${hard.toFixed(1)}) should need fewer shots than normal (${normal.toFixed(1)})`);
   assert.ok(normal < easy, `normal (${normal.toFixed(1)}) should need fewer shots than easy (${easy.toFixed(1)})`);
+  assert.ok(devin < normal, `devin (${devin.toFixed(1)}) should need fewer shots than normal (${normal.toFixed(1)})`);
+  assert.ok(
+    devin < hard * 1.15,
+    `devin (${devin.toFixed(1)}) should be at least comparable to hard (${hard.toFixed(1)})`
+  );
+});
+
+test("devin mode hunts on the parity grid using the density map", () => {
+  const board = g.emptyBoard();
+  const ai = g.makeAI("devin");
+  for (let i = 0; i < 40; i++) {
+    const scores = g.densityMap(ai, board);
+    const [r, c] = g.aiChoose(ai, board);
+    assert.equal((r + c) % 2, 0, `hunt shot ${g.coord(r, c)} is off the parity grid`);
+    const parityBest = Math.max(
+      ...g.allOpen(board).filter(([pr, pc]) => (pr + pc) % 2 === 0).map(([pr, pc]) => scores[pr][pc])
+    );
+    assert.equal(scores[r][c], parityBest, "devin fires at the densest parity cell");
+    board.shots[r][c] = "miss"; // an empty board, so every hunt shot misses
+  }
+});
+
+test("devin mode drains the target queue before hunting again", () => {
+  const board = g.emptyBoard();
+  g.place(board, shipSpec("Cruiser"), g.cellsFor(4, 4, 3, true));
+  const ai = g.makeAI("devin");
+  g.aiObserve(ai, 4, 4, g.fire(board, 4, 4));
+  g.aiObserve(ai, 4, 5, g.fire(board, 4, 5));
+  // Two collinear hits: the queue holds only the line's two ends, one of which is odd parity.
+  const first = g.aiChoose(ai, board);
+  const second = g.aiChoose(ai, board);
+  assert.deepEqual(
+    [first, second].map(([r, c]) => g.coord(r, c)).sort(),
+    ["D5", "G5"].sort()
+  );
+  assert.ok([first, second].some(([r, c]) => (r + c) % 2 !== 0), "the queue overrides parity");
+});
+
+test("devin mode falls back when the parity grid is exhausted", () => {
+  const board = g.emptyBoard();
+  for (let r = 0; r < g.SIZE; r++)
+    for (let c = 0; c < g.SIZE; c++) if ((r + c) % 2 === 0) board.shots[r][c] = "miss";
+  const ai = g.makeAI("devin");
+  const [r, c] = g.aiChoose(ai, board);
+  assert.equal((r + c) % 2, 1, "with no parity cells left it fires at an open odd cell");
 });
