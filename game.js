@@ -109,7 +109,8 @@
   // difficulty: "easy"   = uniform random fire
   //             "normal" = parity hunt + adjacency targeting
   //             "hard"   = probability density over every legal remaining placement
-  const DIFFICULTIES = ["easy", "normal", "hard"];
+  //             "devin"  = parity-masked probability density + predictive line targeting
+  const DIFFICULTIES = ["easy", "normal", "hard", "devin"];
 
   function assertDifficulty(difficulty) {
     if (!DIFFICULTIES.includes(difficulty))
@@ -190,15 +191,19 @@
     return scores;
   }
 
-  function chooseByDensity(ai, board, rng) {
-    const scores = densityMap(ai, board);
+  // Highest-scoring cell among the supplied candidates, ties broken at random.
+  function bestScoring(candidates, scores, rng) {
     let best = [];
     let bestScore = 0;
-    for (const [r, c] of allOpen(board)) {
+    for (const [r, c] of candidates) {
       if (scores[r][c] > bestScore) { bestScore = scores[r][c]; best = [[r, c]]; }
       else if (scores[r][c] === bestScore && bestScore > 0) best.push([r, c]);
     }
     return pickRandom(best, rng);
+  }
+
+  function chooseByDensity(ai, board, rng) {
+    return bestScoring(allOpen(board), densityMap(ai, board), rng);
   }
 
   function aiChoose(ai, board, options = {}) {
@@ -217,6 +222,17 @@
       const [r, c] = ai.queue.shift();
       if (inBounds(r, c) && !board.shots[r][c]) return [r, c];
     }
+
+    if (difficulty === "devin") {
+      const scores = densityMap(ai, board);
+      const parity = open.filter(([r, c]) => (r + c) % 2 === 0);
+      return (
+        (parity.length && bestScoring(parity, scores, rng)) ||
+        bestScoring(open, scores, rng) ||
+        pickRandom(open, rng)
+      );
+    }
+
     const parity = open.filter(([r, c]) => (r + c) % 2 === 0);
     return pickRandom(parity.length ? parity : open, rng);
   }
